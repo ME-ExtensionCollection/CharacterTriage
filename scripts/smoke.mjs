@@ -229,7 +229,7 @@ await withPage("blacklist-and-copy", async (page) => {
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "Horror");
   await page.click(".ctr-tag .ctr-blacklist");
   await page.waitForSelector(".ctr-tag .ctr-blacklist:has-text('On blacklist')");
-  assert.deepEqual(await page.evaluate(() => window.__ciBlacklist), ["Horror"]);
+  assert.deepEqual(await page.evaluate(() => window.__ciBlacklist), ["horror"]);
 }, { query: "?ci=1" });
 
 await withPage("blacklist-needs-char-importer", async (page) => {

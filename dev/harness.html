@@ -40,11 +40,14 @@
         // Mock of Char Importer's sharing API (window.marinaraCharImporter).
         const list = [];
         window.__ciBlacklist = list;
+        // Normalises like Char Importer: lowercase, spaces as underscores.
+        const norm = (t) => String(t).trim().toLowerCase().replace(/\s+/g, "_");
         window.marinaraCharImporter = Object.freeze({
           version: 1,
           profileTagBlacklist: () => [...list],
+          isOnProfileTagBlacklist: (t) => list.includes(norm(t)),
           addProfileTagBlacklist: async (tags) => {
-            for (const t of tags) if (!list.some((x) => x.toLowerCase() === t.toLowerCase())) list.push(t);
+            for (const t of tags) if (!list.includes(norm(t))) list.push(norm(t));
             return [...list];
           },
         });

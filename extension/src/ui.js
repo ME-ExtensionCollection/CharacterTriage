@@ -264,12 +264,15 @@ const CTRUi = (() => {
   function tagsSection() {
     const list = CTR.dislikedTags(CTRStore.decisions, { learnOnly: tagsLearnOnly }).slice(0, 60);
     const ci = importer();
-    let onList = new Set();
-    try {
-      onList = new Set((ci?.profileTagBlacklist?.() ?? []).map(CTR.normTag));
-    } catch {
-      onList = new Set();
-    }
+    // Char Importer spells tags its own way (dark_elf), so let it say what is listed.
+    const listed = (tag) => {
+      try {
+        if (typeof ci?.isOnProfileTagBlacklist === "function") return ci.isOnProfileTagBlacklist(tag);
+        return (ci?.profileTagBlacklist?.() ?? []).map(CTR.normTag).includes(CTR.normTag(tag));
+      } catch {
+        return false;
+      }
+    };
     const filter = h(
       "label.ctr-check",
       {},
@@ -299,10 +302,10 @@ const CTRUi = (() => {
           },
         }),
         h("button.ctr-btn.ctr-blacklist", {
-          text: onList.has(t.key) ? "On blacklist" : "Blacklist",
+          text: listed(t.tag) ? "On blacklist" : "Blacklist",
           attrs: {
             type: "button",
-            disabled: !ci || onList.has(t.key),
+            disabled: !ci || listed(t.tag),
             title: ci ? "Add to Char Importer's profile tag blacklist (cards with it are skipped when a creator profile is imported)" : "Needs Char Importer with its sharing API (newer version)",
           },
           on: {
