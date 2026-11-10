@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Char Triage dev harness</title>
+    <link rel="icon" href="data:," />
+    <style>
+      /* A small subset of Marinara's dark theme tokens. */
+      :root {
+        --background: #050312;
+        --foreground: #d4d4d4;
+        --card: #141414d9;
+        --primary: #ec4b97;
+        --muted-foreground: #a1a1aa;
+        --destructive: #ff6b9d;
+        --border: color-mix(in srgb, var(--primary) 20%, transparent);
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 1rem;
+        background: var(--background);
+        color: var(--foreground);
+        font-family: system-ui, sans-serif;
+      }
+      button {
+        font: inherit;
+      }
+    </style>
+    <link rel="stylesheet" href="/dev/build/extension.css" />
+  </head>
+  <body>
+    <h1>Char Triage harness</h1>
+    <p>Alt+Shift+T or the button opens the panel. <code>?ci=1</code> adds a mock Char Importer.</p>
+    <button id="open-triage" type="button">Open Char Triage</button>
+    <script src="/dev/mock-marinara.js"></script>
+    <script>
+      if (new URLSearchParams(location.search).has("ci")) {
+        // Mock of Char Importer's sharing API (window.marinaraCharImporter).
+        const list = [];
+        window.__ciBlacklist = list;
+        window.marinaraCharImporter = Object.freeze({
+          version: 1,
+          profileTagBlacklist: () => [...list],
+          addProfileTagBlacklist: async (tags) => {
+            for (const t of tags) if (!list.some((x) => x.toLowerCase() === t.toLowerCase())) list.push(t);
+            return [...list];
+          },
+        });
+      }
+      document.getElementById("open-triage").addEventListener("click", () => window.marinaraCharTriage?.openPanel());
+    </script>
+    <script src="/dev/build/page-runtime.js"></script>
+  </body>
+</html>
