@@ -1,9 +1,11 @@
-// Char Triage: the scan job. Sends each card's avatar to the vision model and
-// stores the answers. Newest cards first (the order you browse in), cards you
-// already decided on before those (they train the model), skipping cards
-// already scanned with the current prompt. Runs N requests at once, pauses on
-// "too many requests", retries dropped connections, and picks up again after
-// a reload. A Web Lock keeps it to one tab.
+// Char Triage: the scan job. Sends each card's avatar to the vision model with
+// only the questions that card still needs (new categories, an edited profile,
+// a new avatar), and folds the answers into its stored scan. Newest cards
+// first (the order you browse in), cards you already decided on before those
+// (they train the model). `scanCards(ids)` scans just the cards you pick in the
+// Character Manager. Runs N requests at once, pauses on "too many requests",
+// retries dropped connections, and picks up again after a reload. A Web Lock
+// keeps it to one tab.
 
 const CTRScan = (() => {
   "use strict";
@@ -14,10 +16,11 @@ const CTRScan = (() => {
   const PILOT_SIZE = 300;
 
   let state = idle();
+  let current = null; // the running job list, so scanCards() can add to it
   const listeners = new Set();
 
   function idle() {
-    return { running: false, stopping: false, pilot: false, done: 0, failed: 0, reused: 0, total: 0, startedAt: 0, lastError: "", waitingUntil: 0 };
+    return { running: false, stopping: false, pilot: false, picked: false, done: 0, failed: 0, reused: 0, total: 0, startedAt: 0, lastError: "", waitingUntil: 0 };
   }
 
   const emit = () => {
@@ -30,112 +33,185 @@ const CTRScan = (() => {
     }
   };
   const sleep = (ms) => new Promise((resolve) => marinara.setTimeout(resolve, ms));
+  const newest = (a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""));
 
-  /** What to scan, in order. Avatars kept from deleted cards first, then decided cards, then newest first. */
-  async function plan({ pilot = false } = {}) {
-    const version = CTR.scanVersion(CTRStore.settings.profile);
-    const fresh = (id) => CTRStore.scans.get(id)?.version === version;
-    const decided = new Set(CTRStore.decisions.map((d) => d.cardId));
-    // Kept avatars stand in for cards that are gone; a card still in the library is scanned from its own avatar.
-    const kept = (await CTRDb.allAvatarIds()).filter((id) => !fresh(id) && !CTRStore.cardsById.has(id));
-    const live = CTRStore.cards.filter((c) => !fresh(c.id));
-    const newest = (a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""));
-    const decidedLive = live.filter((c) => decided.has(c.id)).sort(newest);
-    const rest = live.filter((c) => !decided.has(c.id)).sort(newest);
-    const jobs = [...kept.map((id) => ({ id, kept: true })), ...decidedLive.map((c) => ({ id: c.id, card: c })), ...rest.map((c) => ({ id: c.id, card: c }))];
-    // Pilot: only cards you already judged, so the scores can be checked against you.
-    return pilot ? jobs.filter((j) => j.kept || decided.has(j.id)).slice(0, PILOT_SIZE) : jobs;
+  /** A job for a card still in the library, or null when it has nothing left to ask. */
+  function liveJob(card, questions) {
+    const missing = CTR.missingQuestions(CTRStore.scans.get(card.id), questions, card.avatarPath || "");
+    return missing.length ? { id: card.id, card, missing } : null;
   }
 
-  async function start({ pilot = false } = {}) {
+  /**
+   * What to scan, in order: avatars kept from deleted cards, then cards you
+   * decided on, then the rest newest first. `ids` limits it to those cards
+   * (in that order); `pilot` to cards you decided on.
+   */
+  async function plan({ pilot = false, ids = null } = {}) {
+    const questions = CTRStore.questions();
+    const decided = new Set(CTRStore.decisions.map((d) => d.cardId));
+    const jobs = [];
+    // Kept avatars stand in for cards that are gone; a card still in the library is scanned from its own avatar.
+    for (const id of await CTRDb.allAvatarIds()) {
+      if (CTRStore.cardsById.has(id) || (ids && !ids.includes(id))) continue;
+      const missing = CTR.missingQuestions(CTRStore.scans.get(id), questions);
+      if (missing.length) jobs.push({ id, kept: true, missing });
+    }
+    if (ids) {
+      for (const id of ids) {
+        const card = CTRStore.cardsById.get(id);
+        const job = card && liveJob(card, questions);
+        if (job) jobs.push(job);
+      }
+      return jobs;
+    }
+    const live = [...CTRStore.cards].sort(newest);
+    for (const card of live) if (decided.has(card.id)) jobs.push(liveJob(card, questions));
+    if (!pilot) for (const card of live) if (!decided.has(card.id)) jobs.push(liveJob(card, questions));
+    const list = jobs.filter(Boolean);
+    return pilot ? list.slice(0, PILOT_SIZE) : list;
+  }
+
+  async function start({ pilot = false, ids = null } = {}) {
     if (state.running) return;
-    const { connectionId, profile } = CTRStore.settings;
+    const { connectionId } = CTRStore.settings;
     if (!connectionId) throw new Error("Pick a connection first.");
-    if (!navigator.locks) return run({ pilot, connectionId, profile });
+    if (!navigator.locks) return run({ pilot, ids, connectionId });
     let ran = false;
     await navigator.locks.request(LOCK, { ifAvailable: true }, async (lock) => {
       if (!lock) return;
       ran = true;
-      await run({ pilot, connectionId, profile });
+      await run({ pilot, ids, connectionId });
     });
     if (!ran) throw new Error("Already scanning in another tab.");
   }
 
-  async function run({ pilot, connectionId, profile }) {
+  /**
+   * Scan just these cards (only their missing questions). Joins a running scan,
+   * else starts one. Resolves with how many cards had something to ask.
+   */
+  async function scanCards(ids) {
+    const list = [...new Set(ids)];
+    if (state.running && current) {
+      const questions = CTRStore.questions();
+      const queued = new Set(current.jobs.slice(current.next()).map((j) => j.id));
+      let added = 0;
+      // Picked cards go next, ahead of the rest of a full scan.
+      const front = [];
+      for (const id of list) {
+        const card = CTRStore.cardsById.get(id);
+        const job = card && !queued.has(id) && liveJob(card, questions);
+        if (job) {
+          front.push(job);
+          added += 1;
+        }
+      }
+      current.jobs.splice(current.next(), 0, ...front);
+      state.total += added;
+      emit();
+      return added;
+    }
     await CTRStore.refreshCatalog().catch(() => {});
-    const jobs = await plan({ pilot });
-    state = { ...idle(), running: true, pilot, total: jobs.length, startedAt: Date.now() };
-    if (!pilot) CTRStore.saveSettings({ scanning: true });
+    const jobs = await plan({ ids: list });
+    if (!jobs.length) return 0;
+    void start({ ids: list }).catch((error) => {
+      state.lastError = error.message;
+      emit();
+    });
+    return jobs.length;
+  }
+
+  async function run({ pilot, ids, connectionId }) {
+    await CTRStore.refreshCatalog().catch(() => {});
+    const jobs = await plan({ pilot, ids });
+    state = { ...idle(), running: true, pilot, picked: !!ids, total: jobs.length, startedAt: Date.now() };
+    const fullScan = !pilot && !ids;
+    if (fullScan) CTRStore.saveSettings({ scanning: true });
     emit();
-    const version = CTR.scanVersion(profile);
-    const prompt = CTR.prompt(profile);
-    const schema = CTR.answerSchema(profile);
-    // Identical images (re-imports) reuse a scan: hash -> answers, or the promise of them.
+    // Identical images (re-imports): hash -> the scan of a card with that image, or the promise of it.
     const byHash = new Map();
-    for (const s of CTRStore.scans.values()) if (s.version === version && s.avatarHash && s.answers) byHash.set(s.avatarHash, s.answers);
+    for (const s of CTRStore.scans.values()) if (s.avatarHash && s.answers) byHash.set(s.avatarHash, s);
     const keptIds = new Set(await CTRDb.allAvatarIds());
     let next = 0;
     let pausedUntil = 0;
+    current = { jobs, next: () => next };
+
+    const ask = async (job, image) => {
+      const prompt = CTR.prompt(job.missing);
+      const schema = CTR.answerSchema(job.missing);
+      for (let transient = 0; ; ) {
+        const wait = pausedUntil - Date.now();
+        if (wait > 0) await sleep(wait);
+        try {
+          const text = await CTRApi.describe({ connectionId, prompt, schema, dataUrl: image.dataUrl, runId: `ctr-${job.id}-${Date.now()}` });
+          return CTR.parseAnswers(text, job.missing);
+        } catch (error) {
+          if (error.status === 429) {
+            const seconds = Math.min(Math.max(error.retryAfter ?? 10, 1), 120);
+            pausedUntil = Math.max(pausedUntil, Date.now() + seconds * 1000);
+            state.waitingUntil = pausedUntil;
+            emit();
+            continue;
+          }
+          const transientError = error.status === undefined || error.status >= 500;
+          if (transientError && transient < TRANSIENT_RETRIES.length && !state.stopping) {
+            await sleep(TRANSIENT_RETRIES[transient++]);
+            continue;
+          }
+          throw error;
+        }
+      }
+    };
+
+    /** Answers another card with the same image already has for all of `missing`, or null. */
+    const covered = (scan, missing) => {
+      if (!scan?.answers) return null;
+      for (const q of missing) if (scan.asked?.[q.id] !== CTR.questionKey(q)) return null;
+      return Object.fromEntries(missing.map((q) => [q.id, scan.answers[q.id] ?? null]));
+    };
 
     const scanOne = async (job) => {
       let image;
+      let avatarPath;
       if (job.kept) {
         const saved = await CTRDb.getAvatar(job.id);
         if (!saved) return;
         image = { dataUrl: saved.dataUrl, hash: saved.hash };
+        avatarPath = saved.avatarPath ?? CTRStore.scans.get(job.id)?.avatarPath ?? null;
       } else {
+        avatarPath = job.card.avatarPath || null;
         try {
-          image = await CTRApi.avatar(job.card.avatarPath);
+          image = await CTRApi.avatar(avatarPath);
         } catch (error) {
           if (!error.noAvatar) throw error;
-          await CTRStore.putScan({ cardId: job.id, version, avatarHash: null, answers: null, error: error.message, scannedAt: new Date().toISOString() });
+          await CTRStore.putScan({ cardId: job.id, avatarPath, avatarHash: null, noAvatar: true, answers: null, asked: {}, error: error.message, scannedAt: new Date().toISOString() });
           return;
         }
       }
-      const ask = async () => {
-        for (let transient = 0; ; ) {
-          const wait = pausedUntil - Date.now();
-          if (wait > 0) await sleep(wait);
-          try {
-            const text = await CTRApi.describe({ connectionId, prompt, schema, dataUrl: image.dataUrl, runId: `ctr-${job.id}-${Date.now()}` });
-            return CTR.parseAnswers(text);
-          } catch (error) {
-            if (error.status === 429) {
-              const seconds = Math.min(Math.max(error.retryAfter ?? 10, 1), 120);
-              pausedUntil = Math.max(pausedUntil, Date.now() + seconds * 1000);
-              state.waitingUntil = pausedUntil;
-              emit();
-              continue;
-            }
-            const transientError = error.status === undefined || error.status >= 500;
-            if (transientError && transient < TRANSIENT_RETRIES.length && !state.stopping) {
-              await sleep(TRANSIENT_RETRIES[transient++]);
-              continue;
-            }
-            throw error;
-          }
-        }
-      };
       let answers = null;
       const shared = image.hash ? byHash.get(image.hash) : undefined;
       if (shared) {
-        // Same image as another card (done, or still being asked about): share its answers.
-        answers = await Promise.resolve(shared).catch(() => null);
+        // Same image as another card (done, or still being asked about).
+        answers = covered(await Promise.resolve(shared).catch(() => null), job.missing);
         if (answers) state.reused += 1;
       }
-      if (!answers) {
-        const asking = ask();
+      let scan;
+      if (answers) {
+        scan = CTR.mergeAnswers(CTRStore.scans.get(job.id), { cardId: job.id, avatarPath, avatarHash: image.hash, questions: job.missing, answers });
+      } else {
+        const asking = ask(job, image).then((got) =>
+          CTR.mergeAnswers(CTRStore.scans.get(job.id), { cardId: job.id, avatarPath, avatarHash: image.hash, questions: job.missing, answers: got }),
+        );
         if (image.hash) byHash.set(image.hash, asking);
         try {
-          answers = await asking;
+          scan = await asking;
         } catch (error) {
           if (image.hash && byHash.get(image.hash) === asking) byHash.delete(image.hash);
           throw error;
         }
-        if (image.hash) byHash.set(image.hash, answers);
       }
-      await CTRStore.putScan({ cardId: job.id, version, avatarHash: image.hash ?? null, answers, scannedAt: new Date().toISOString() });
-      // The kept copy is no longer needed once the card has a scan.
+      if (image.hash) byHash.set(image.hash, scan);
+      await CTRStore.putScan(scan);
+      // The kept copy is no longer needed once the card has everything asked.
       if (job.kept || keptIds.has(job.id)) await CTRDb.deleteAvatar(job.id);
     };
 
@@ -162,11 +238,15 @@ const CTRScan = (() => {
       }
     };
     try {
-      await Promise.all(Array.from({ length: Math.min(CTRStore.settings.concurrency, jobs.length) }, worker));
+      // Cards added by scanCards() just as the last worker finished still get scanned.
+      while (next < jobs.length && !state.stopping) {
+        await Promise.all(Array.from({ length: Math.min(CTRStore.settings.concurrency, jobs.length - next) }, worker));
+      }
     } finally {
+      current = null;
       // Only a reload mid-run (this never runs) leaves `scanning` on, to resume.
       state = { ...state, running: false, stopping: false, finishedAt: Date.now() };
-      if (!pilot) CTRStore.saveSettings({ scanning: false });
+      if (fullScan) CTRStore.saveSettings({ scanning: false });
       CTRStore.retrain();
       emit();
     }
@@ -190,6 +270,7 @@ const CTRScan = (() => {
     start,
     stop,
     plan,
+    scanCards,
     eta,
     PILOT_SIZE,
     get state() {

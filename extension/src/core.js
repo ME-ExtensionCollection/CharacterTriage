@@ -1,109 +1,126 @@
-// Char Triage: pure logic, no DOM or network. The vision prompt and its JSON
-// schema, parsing the model's answer, turning answers + card metadata into
-// features, a small logistic regression trained on the user's own decisions,
-// tag statistics and backup merging. Unit-tested in test/core.test.mjs.
+// Char Triage: pure logic, no DOM or network. The questions the vision model
+// is asked (built in, your own categories, the dislike profile), each with its
+// own version key so a change only re-asks that one question; the prompt and
+// JSON schema for whichever questions a card still needs; parsing the reply;
+// picture tags for the Character Manager; features and a small logistic
+// regression trained on your decisions; tag statistics and backup merging.
+// Unit-tested in test/core.test.mjs.
 
 const CTR = (() => {
   "use strict";
 
-  // Bump when the questions change: scans made with another version are redone.
-  const PROMPT_VERSION = 1;
+  // ── Questions ──
 
-  /** Each question: JSON schema for the answer, and the rubric line the model reads. */
-  const QUESTIONS = Object.freeze({
-    style: {
+  /**
+   * Built-in questions, in prompt order: { id, schema, rubric }. Changing a
+   * rubric or schema changes that question's key, so it is asked again (and
+   * only it). The wording of the ones from 0.1 is unchanged on purpose.
+   */
+  const BUILTIN = Object.freeze([
+    {
+      id: "style",
       schema: { enum: ["anime", "semi_realistic", "3d_render", "photo", "painterly", "sketch", "pixel", "other"] },
       rubric: "art style: anime (anime/manga/cel-shaded), semi_realistic, 3d_render (CGI, game/Daz/Koikatsu renders), photo (real photograph), painterly (digital or traditional painting), sketch (line art, unfinished), pixel, other",
     },
-    ai_artifacts: {
+    {
+      id: "ai_artifacts",
       schema: { type: "integer", minimum: 0, maximum: 3 },
       rubric: "signs of AI generation: 0 none visible, 1 subtle (too-smooth skin, generic glossy look), 2 obvious (malformed hands, eyes or fingers, melted details, garbled background objects), 3 severe (badly broken anatomy or faces)",
     },
-    image_quality: {
+    {
+      id: "image_quality",
       schema: { type: "integer", minimum: 0, maximum: 3 },
       rubric: "technical quality: 0 very poor (tiny, blurry, heavily compressed, cropped badly), 1 poor, 2 decent, 3 high (crisp, clean, well composed)",
     },
-    low_effort: {
+    {
+      id: "low_effort",
       schema: { type: "boolean" },
       rubric: "true if the image is a screenshot, meme, plain text, logo, placeholder, collage or otherwise not a proper character picture",
     },
-    text_overlay: {
+    {
+      id: "text_overlay",
       schema: { enum: ["none", "small", "prominent"] },
       rubric: "text, captions, logos or watermarks drawn on the image: none, small (corner signature or watermark), prominent (titles, big captions, text covering the picture)",
     },
-    nsfw: {
+    {
+      id: "nsfw",
       schema: { type: "integer", minimum: 0, maximum: 3 },
       rubric: "sexual content: 0 safe, 1 suggestive (revealing clothes, pin-up pose), 2 partial nudity, 3 explicit",
     },
-    gore: {
-      schema: { type: "integer", minimum: 0, maximum: 3 },
-      rubric: "violence or gore: 0 none, 1 mild (weapons, small wounds), 2 bloody, 3 graphic",
-    },
-    framing: {
+    {
+      id: "framing",
       schema: { enum: ["face", "portrait", "full_body", "scene", "no_character"] },
       rubric: "framing of the main character: face (head only), portrait (head and torso), full_body, scene (characters small in a wider scene), no_character",
     },
-    subjects: {
-      schema: { enum: ["none", "one", "two", "group"] },
-      rubric: "how many characters are shown",
-    },
-    presentation: {
-      schema: { enum: ["female", "male", "mixed", "ambiguous", "none"] },
-      rubric: "gender presentation of the character(s) shown",
-    },
-    species: {
+    { id: "subjects", schema: { enum: ["none", "one", "two", "group"] }, rubric: "how many characters are shown" },
+    { id: "presentation", schema: { enum: ["female", "male", "mixed", "ambiguous", "none"] }, rubric: "gender presentation of the character(s) shown" },
+    {
+      id: "species",
       schema: { enum: ["human", "humanlike", "furry", "monster", "robot", "object", "none"] },
       rubric: "what the main character is: human, humanlike (elf, demon, kemonomimi with animal ears/tail), furry (anthro animal), monster, robot, object (no living character), none",
     },
-    background: {
-      schema: { enum: ["plain", "simple", "detailed"] },
-      rubric: "background: plain (flat colour or transparent), simple, detailed",
+    { id: "background", schema: { enum: ["plain", "simple", "detailed"] }, rubric: "background: plain (flat colour or transparent), simple, detailed" },
+    { id: "palette", schema: { enum: ["dark", "bright", "pastel", "muted", "monochrome", "neon"] }, rubric: "overall colours" },
+    { id: "tone", schema: { enum: ["wholesome", "neutral", "romantic", "sexual", "dark", "comedic"] }, rubric: "overall mood of the image" },
+    {
+      id: "tags",
+      schema: { type: "array", items: { type: "string", maxLength: 40 }, maxItems: 15 },
+      rubric: "up to 15 danbooru-style tags for what is visible (lowercase, underscores instead of spaces, e.g. 1girl, long_hair, maid, sword, tentacles, large_breasts, outdoors): characters, body, clothing, objects, setting. Most important first. Only what you can see.",
     },
-    palette: {
-      schema: { enum: ["dark", "bright", "pastel", "muted", "monochrome", "neon"] },
-      rubric: "overall colours",
-    },
-    tone: {
-      schema: { enum: ["wholesome", "neutral", "romantic", "sexual", "dark", "comedic"] },
-      rubric: "overall mood of the image",
-    },
-    caption: {
-      schema: { type: "string", maxLength: 160 },
-      rubric: "a plain description of the image in at most 15 words",
-    },
-  });
-  const PROFILE_QUESTION = {
-    schema: { type: "integer", minimum: 1, maximum: 5 },
-    rubric: "how well this image matches what the user DISLIKES (described below): 1 not at all, 3 partly, 5 exactly what they dislike",
-  };
+  ]);
+  const MAX_TAGS = 15;
+
+  const CATEGORY_RUBRIC = "0 none, 1 a hint or mild, 2 clearly shown, 3 the focus of the image";
+
+  /** Example categories, off until you turn them on (and editable). */
+  const CATEGORY_PRESETS = Object.freeze([
+    { id: "hyper_anatomy", label: "Hyper anatomy", question: "hyper-exaggerated anatomy (body parts drawn impossibly large)" },
+    { id: "inflation", label: "Inflation", question: "body inflation (a body or belly swollen up like a balloon, with air, liquid or similar)" },
+    { id: "weight_gain", label: "Weight gain", question: "weight gain or extreme obesity as a theme" },
+    { id: "body_horror", label: "Body horror", question: "body horror or extreme body distortion (mutation, melting, twisted or merged bodies)" },
+    { id: "gore_guro", label: "Gore / guro", question: "gore or guro (blood, open wounds, exposed organs, mutilation)" },
+    { id: "amputation", label: "Dismemberment / amputation", question: "dismemberment or amputation (missing or severed limbs)" },
+    { id: "vore", label: "Vore", question: "vore (a character being swallowed or eaten whole, or inside another's body)" },
+  ]);
+
+  /** A category label to its id: lowercase letters, digits, underscores. */
+  const slug = (text) =>
+    String(text ?? "")
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 40);
+
+  const categoryField = (id) => `cat_${id}`;
+
+  function categoryQuestion(category) {
+    return {
+      id: categoryField(category.id),
+      category: category.id,
+      label: category.label,
+      schema: { type: "integer", minimum: 0, maximum: 3 },
+      rubric: `${String(category.question ?? category.label).trim()}: ${CATEGORY_RUBRIC}`,
+    };
+  }
 
   const hasProfile = (profile) => typeof profile === "string" && profile.trim().length > 0;
 
-  /** JSON schema for the answer; `profile_match` only when there is a dislike profile. */
-  function answerSchema(profile) {
-    const properties = {};
-    for (const [key, q] of Object.entries(QUESTIONS)) properties[key] = q.schema;
-    if (hasProfile(profile)) properties.profile_match = PROFILE_QUESTION.schema;
-    return { type: "object", additionalProperties: false, required: Object.keys(properties), properties };
+  function profileQuestion(profile) {
+    return {
+      id: "profile_match",
+      schema: { type: "integer", minimum: 1, maximum: 5 },
+      rubric: "how well this image matches what the user DISLIKES (described below): 1 not at all, 3 partly, 5 exactly what they dislike",
+      profile: profile.trim().slice(0, 2000),
+    };
   }
 
-  function prompt(profile) {
-    const lines = Object.entries(QUESTIONS).map(([key, q]) => `- ${key}: ${q.rubric}`);
-    if (hasProfile(profile)) lines.push(`- profile_match: ${PROFILE_QUESTION.rubric}`);
-    const parts = [
-      "You are labelling the avatar image of a roleplay character card. Look only at the image.",
-      "Answer every field with a JSON object, nothing else. Judge what is visible; do not guess from style alone.",
-      "",
-      "Fields:",
-      ...lines,
-    ];
-    if (hasProfile(profile)) parts.push("", "What the user dislikes:", profile.trim().slice(0, 2000));
-    return parts.join("\n");
-  }
-
-  /** Version key for a scan: prompt version plus the profile it was asked with. */
-  function scanVersion(profile) {
-    return `${PROMPT_VERSION}:${hasProfile(profile) ? hash32(profile.trim()) : "-"}`;
+  /** Every question currently in use: built in, enabled categories, the profile. Each carries its `key`. */
+  function activeQuestions({ categories = [], profile = "" } = {}) {
+    const list = [...BUILTIN];
+    for (const c of categories) if (c?.enabled && c.id) list.push(categoryQuestion(c));
+    if (hasProfile(profile)) list.push(profileQuestion(profile));
+    return list.map((q) => ({ ...q, key: questionKey(q) }));
   }
 
   function hash32(text) {
@@ -115,13 +132,73 @@ const CTR = (() => {
     return (h >>> 0).toString(36);
   }
 
+  /** Version key of one question: changes when its wording, schema or (profile) text changes. */
+  const questionKey = (q) => q.key ?? hash32(`${q.id}\n${q.rubric}\n${JSON.stringify(q.schema)}\n${q.profile ?? ""}`);
+
   /**
-   * Parse the model's reply into checked answers. Accepts a bare object, a
-   * ```json fence, or text around one object. Unknown keys are dropped; a
-   * missing or out-of-range field becomes null rather than failing the scan.
-   * Throws when there is no JSON object at all.
+   * Questions a card still needs asked. A scan made for another avatar file
+   * needs everything; a card with no avatar needs nothing until it gets one.
    */
-  function parseAnswers(text) {
+  function missingQuestions(scan, questions, avatarPath) {
+    if (scan && avatarPath !== undefined && (scan.avatarPath ?? null) !== (avatarPath || null)) return avatarPath ? questions : [];
+    if (scan?.noAvatar) return [];
+    return questions.filter((q) => scan?.asked?.[q.id] !== questionKey(q));
+  }
+
+  function answerSchema(questions) {
+    const properties = {};
+    for (const q of questions) properties[q.id] = q.schema;
+    return { type: "object", additionalProperties: false, required: questions.map((q) => q.id), properties };
+  }
+
+  function prompt(questions) {
+    const parts = [
+      "You are labelling the avatar image of a roleplay character card. Look only at the image.",
+      "Answer every field with a JSON object, nothing else. Judge what is visible; do not guess from style alone.",
+      "",
+      "Fields:",
+      ...questions.map((q) => `- ${q.id}: ${q.rubric}`),
+    ];
+    const profile = questions.find((q) => q.profile)?.profile;
+    if (profile) parts.push("", "What the user dislikes:", profile);
+    return parts.join("\n");
+  }
+
+  // ── Parsing ──
+
+  /** One picture tag: lowercase, underscores, no leading #, at most 40 characters. */
+  function normImageTag(tag) {
+    return String(tag ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .trim()
+      .replace(/^#+/u, "")
+      .replace(/\s+/gu, "_")
+      .replace(/[^\p{L}\p{N}_()'.:+-]/gu, "")
+      .replace(/_+/gu, "_")
+      .replace(/^_|_$/gu, "")
+      .slice(0, 40);
+  }
+
+  function checkValue(schema, v) {
+    if (schema.enum) return schema.enum.includes(v) ? v : null;
+    if (schema.type === "integer") return Number.isInteger(v) && v >= schema.minimum && v <= schema.maximum ? v : null;
+    if (schema.type === "boolean") return typeof v === "boolean" ? v : null;
+    if (schema.type === "string") return typeof v === "string" ? v.trim().slice(0, schema.maxLength) : null;
+    if (schema.type === "array") {
+      if (!Array.isArray(v)) return null;
+      return [...new Set(v.map(normImageTag).filter(Boolean))].slice(0, schema.maxItems ?? MAX_TAGS);
+    }
+    return null;
+  }
+
+  /**
+   * Parse the model's reply into checked answers for `questions`. Accepts a
+   * bare object, a ```json fence, or text around one object. Unknown keys are
+   * dropped; a missing or out-of-range field becomes null rather than failing
+   * the scan. Throws when there is no usable JSON object.
+   */
+  function parseAnswers(text, questions) {
     const raw = String(text ?? "");
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
@@ -134,22 +211,86 @@ const CTR = (() => {
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Model reply is not a JSON object");
     const out = {};
-    const all = { ...QUESTIONS, profile_match: PROFILE_QUESTION };
     let known = 0;
-    for (const [key, q] of Object.entries(all)) {
-      const v = value[key];
-      const s = q.schema;
-      let ok = null;
-      if (s.enum) ok = s.enum.includes(v) ? v : null;
-      else if (s.type === "integer") ok = Number.isInteger(v) && v >= s.minimum && v <= s.maximum ? v : null;
-      else if (s.type === "boolean") ok = typeof v === "boolean" ? v : null;
-      else if (s.type === "string") ok = typeof v === "string" ? v.trim().slice(0, s.maxLength) : null;
-      if (key === "profile_match" && v === undefined) continue;
-      out[key] = ok;
+    for (const q of questions) {
+      const ok = checkValue(q.schema, value[q.id]);
+      out[q.id] = ok;
       if (ok !== null) known += 1;
     }
     if (known === 0) throw new Error("Model reply has none of the expected fields");
     return out;
+  }
+
+  /**
+   * Fold new answers into a stored scan: only the questions just asked are
+   * replaced, everything else is kept.
+   */
+  function mergeAnswers(scan, { cardId, avatarPath, avatarHash, questions, answers, at = new Date().toISOString() }) {
+    const sameAvatar = scan && (scan.avatarPath ?? null) === (avatarPath ?? null);
+    const base = sameAvatar ? scan : null;
+    const next = {
+      cardId,
+      avatarPath: avatarPath ?? null,
+      avatarHash: avatarHash ?? base?.avatarHash ?? null,
+      answers: { ...(base?.answers ?? {}) },
+      asked: { ...(base?.asked ?? {}) },
+      scannedAt: at,
+    };
+    for (const q of questions) {
+      next.answers[q.id] = answers[q.id] ?? null;
+      next.asked[q.id] = questionKey(q);
+    }
+    return next;
+  }
+
+  /**
+   * 0.1 scans had one version for everything ("1:<profile hash>") and no
+   * per-question keys. Mark the built-in questions they answered as asked
+   * (their wording did not change), and profile_match when the profile is the
+   * same, so only new questions (tags, categories) are asked again.
+   * `avatarPath` is the card's, as 0.1 did not store it.
+   */
+  function migrateScan(scan, profile, avatarPath) {
+    if (!scan || scan.asked || !scan.version) return scan;
+    // 0.1 stored no avatar path; the card's current one is the best guess.
+    if (!scan.answers) return { ...scan, noAvatar: true, asked: {}, avatarPath: null };
+    const asked = {};
+    for (const q of BUILTIN) if (q.id in scan.answers) asked[q.id] = questionKey(q);
+    const [, profileHash] = String(scan.version).split(":");
+    if (hasProfile(profile) && profileHash === hash32(profile.trim()) && Number.isInteger(scan.answers.profile_match)) {
+      asked.profile_match = questionKey(profileQuestion(profile));
+    }
+    return { ...scan, asked, avatarPath: avatarPath ?? null };
+  }
+
+  // ── Picture tags (for the Character Manager) ──
+
+  const IMAGE_PREFIX = "image:";
+
+  /**
+   * Picture tags for one scan: every free tag as `image:<tag>`, the built-in
+   * answers as `image:<field>:<value>` (numbers also as `image:<field>` when
+   * above 0, and cumulatively, so `image:nsfw:2` means "2 or more"), and each
+   * enabled category the same way: `image:inflation`, `image:inflation:1`…
+   */
+  function imageTags(answers, { categories = [] } = {}) {
+    if (!answers) return [];
+    const out = new Set();
+    const level = (name, value, max) => {
+      if (!Number.isInteger(value) || value <= 0) return;
+      out.add(`${IMAGE_PREFIX}${name}`);
+      for (let k = 1; k <= Math.min(value, max); k += 1) out.add(`${IMAGE_PREFIX}${name}:${k}`);
+    };
+    for (const q of BUILTIN) {
+      const v = answers[q.id];
+      if (v === null || v === undefined) continue;
+      if (q.schema.enum) out.add(`${IMAGE_PREFIX}${q.id}:${v}`);
+      else if (q.schema.type === "integer") level(q.id, v, q.schema.maximum);
+      else if (q.schema.type === "boolean" && v) out.add(`${IMAGE_PREFIX}${q.id}`);
+    }
+    for (const c of categories) if (c?.enabled) level(c.id, answers[categoryField(c.id)], 3);
+    for (const t of Array.isArray(answers.tags) ? answers.tags : []) out.add(`${IMAGE_PREFIX}${t}`);
+    return [...out];
   }
 
   // ── Features ──
@@ -160,21 +301,27 @@ const CTR = (() => {
     [...new Set(String(caption ?? "").toLowerCase().match(/[a-z][a-z'-]{2,}/g) ?? [])].filter((w) => !STOP.has(w));
 
   /**
-   * Sparse features for one card: `answers` (may be null when not scanned yet)
-   * plus catalog metadata. Returns Map name -> value. `imageOnly` leaves out
-   * tags and creator.
+   * Sparse features for one card: `answers` (null when not scanned yet) plus
+   * catalog metadata. Returns Map name -> value. `categories` limits category
+   * answers to the ones still in use; `imageOnly` leaves out tags and creator.
    */
-  function features(answers, card = {}, { imageOnly = false } = {}) {
+  function features(answers, card = {}, { imageOnly = false, categories = null } = {}) {
     const x = new Map();
     if (answers) {
-      for (const [key, q] of Object.entries(QUESTIONS)) {
-        const v = answers[key];
+      for (const q of BUILTIN) {
+        const v = answers[q.id];
         if (v === null || v === undefined) continue;
-        if (q.schema.enum) x.set(`${key}=${v}`, 1);
-        else if (q.schema.type === "integer") x.set(key, v / q.schema.maximum);
-        else if (q.schema.type === "boolean") x.set(key, v ? 1 : 0);
+        if (q.schema.enum) x.set(`${q.id}=${v}`, 1);
+        else if (q.schema.type === "integer") x.set(q.id, v / q.schema.maximum);
+        else if (q.schema.type === "boolean") x.set(q.id, v ? 1 : 0);
       }
-      for (const w of captionWords(answers.caption)) x.set(`w:${w}`, 0.5);
+      if (Array.isArray(answers.tags)) for (const t of answers.tags) x.set(`it:${t}`, 0.5);
+      else for (const w of captionWords(answers.caption)) x.set(`w:${w}`, 0.5); // 0.1 scans
+      const inUse = categories ? new Set(categories.filter((c) => c?.enabled).map((c) => categoryField(c.id))) : null;
+      for (const [key, v] of Object.entries(answers)) {
+        if (!key.startsWith("cat_") || !Number.isInteger(v) || (inUse && !inUse.has(key))) continue;
+        x.set(key, v / 3);
+      }
       if (Number.isInteger(answers.profile_match)) x.set("profile_match", (answers.profile_match - 1) / 4);
     } else {
       x.set("unscanned", 1);
@@ -244,7 +391,7 @@ const CTR = (() => {
     return sigmoid(z);
   }
 
-  /** k-fold accuracy and counts, to show whether the model is learning anything. */
+  /** k-fold accuracy, to show whether the model is learning anything. */
   function crossValidate(rows, { folds = 5, ...options } = {}) {
     if (rows.length < folds * 2) return null;
     let correct = 0;
@@ -274,10 +421,7 @@ const CTR = (() => {
 
   const IMPLIED_WEIGHT = 0.3;
 
-  /**
-   * decisions: newest per card wins. Deletes with learn=false only feed the
-   * tag statistics, not the model.
-   */
+  /** Newest decision per card. */
   function latestDecisions(decisions) {
     const byCard = new Map();
     for (const d of decisions) {
@@ -287,14 +431,15 @@ const CTR = (() => {
     return [...byCard.values()];
   }
 
-  function trainingRows(decisions, answersFor) {
+  /** Deletes with learn=false only feed the tag statistics, not the model. */
+  function trainingRows(decisions, answersFor, options = {}) {
     const rows = [];
     for (const d of latestDecisions(decisions)) {
       if (d.decision === "delete" && d.learn === false) continue;
-      const answers = d.answers ?? answersFor(d.cardId) ?? null;
+      const answers = answersFor(d.cardId) ?? d.answers ?? null;
       const y = d.decision === "delete" ? 1 : 0;
       const w = d.decision === "implied-keep" ? IMPLIED_WEIGHT : 1;
-      rows.push({ x: features(answers, d), y, w, cardId: d.cardId });
+      rows.push({ x: features(answers, d, options), y, w, cardId: d.cardId });
     }
     return rows;
   }
@@ -302,17 +447,18 @@ const CTR = (() => {
   /**
    * Tags you delete more than keep. Smoothed log-odds against your overall
    * delete rate, so a tag on 2 of 2 deletes does not outrank one on 40 of 50.
+   * `tagsOf(decision)` picks the tags (default: the card's own tags).
    */
-  function dislikedTags(decisions, { minDeletes = 5, prior = 2, learnOnly = false } = {}) {
+  function dislikedTags(decisions, { minDeletes = 5, prior = 2, learnOnly = false, tagsOf = (d) => d.tags ?? [], keyOf = normTag } = {}) {
     const latest = latestDecisions(decisions).filter((d) => !(learnOnly && d.decision === "delete" && d.learn === false));
     const deletes = latest.filter((d) => d.decision === "delete").length;
     const keeps = latest.length - deletes;
     if (!deletes || !keeps) return [];
     const rate = deletes / latest.length;
-    const counts = new Map(); // tag -> [label, deletes, keeps]
+    const counts = new Map(); // key -> [label, deletes, keeps]
     for (const d of latest) {
-      for (const raw of new Set(d.tags ?? [])) {
-        const key = normTag(raw);
+      for (const raw of new Set(tagsOf(d))) {
+        const key = keyOf(raw);
         if (!key) continue;
         const entry = counts.get(key) ?? [String(raw).trim(), 0, 0];
         if (d.decision === "delete") entry[1] += 1;
@@ -336,12 +482,29 @@ const CTR = (() => {
   const BACKUP_KIND = "char-triage-backup";
 
   function makeBackup({ settings, decisions, scans }) {
-    return { kind: BACKUP_KIND, version: 1, exportedAt: new Date().toISOString(), settings, decisions, scans };
+    return { kind: BACKUP_KIND, version: 2, exportedAt: new Date().toISOString(), settings, decisions, scans };
+  }
+
+  /** JSON with object keys sorted, to compare scans regardless of key order. */
+  const stableJson = (value) =>
+    JSON.stringify(value, (_, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v));
+
+  /** Two scans of one card: per question, the newer answer wins (if they are for the same avatar). */
+  function mergeScan(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const [older, newer] = (a.scannedAt ?? "") <= (b.scannedAt ?? "") ? [a, b] : [b, a];
+    if ((older.avatarPath ?? null) !== (newer.avatarPath ?? null) || !older.asked || !newer.asked || !older.answers || !newer.answers) return newer;
+    return {
+      ...newer,
+      answers: { ...older.answers, ...newer.answers },
+      asked: { ...older.asked, ...newer.asked },
+    };
   }
 
   /**
    * Merge a backup into what is stored. Decisions are a log: kept unless the
-   * same card+time+decision is already there. Scans: the newer per card wins.
+   * same card+time+decision is already there. Scans merge per question.
    */
   function mergeBackup(current, backup) {
     if (backup?.kind !== BACKUP_KIND) throw new Error("Not a Char Triage backup file");
@@ -359,10 +522,11 @@ const CTR = (() => {
     const scans = new Map(current.scans.map((s) => [s.cardId, s]));
     let addedScans = 0;
     for (const s of backup.scans ?? []) {
-      if (!s?.cardId || !s.answers) continue;
+      if (!s?.cardId || (!s.answers && !s.noAvatar)) continue;
       const prev = scans.get(s.cardId);
-      if (!prev || (s.scannedAt ?? "") > (prev.scannedAt ?? "")) {
-        scans.set(s.cardId, s);
+      const merged = mergeScan(prev, s);
+      if (merged !== prev && stableJson(merged) !== stableJson(prev)) {
+        scans.set(s.cardId, merged);
         addedScans += 1;
       }
     }
@@ -370,13 +534,24 @@ const CTR = (() => {
   }
 
   return Object.freeze({
-    PROMPT_VERSION,
-    QUESTIONS,
+    BUILTIN,
+    CATEGORY_PRESETS,
+    CATEGORY_RUBRIC,
+    IMAGE_PREFIX,
+    slug,
+    categoryField,
+    categoryQuestion,
+    activeQuestions,
+    questionKey,
+    missingQuestions,
     answerSchema,
     prompt,
-    scanVersion,
     hash32,
+    normImageTag,
     parseAnswers,
+    mergeAnswers,
+    migrateScan,
+    imageTags,
     normTag,
     features,
     train,
@@ -388,6 +563,7 @@ const CTR = (() => {
     trainingRows,
     dislikedTags,
     makeBackup,
+    mergeScan,
     mergeBackup,
     IMPLIED_WEIGHT,
   });

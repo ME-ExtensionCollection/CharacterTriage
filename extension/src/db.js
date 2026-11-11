@@ -3,10 +3,11 @@
 // only settings go to marinara.storage. Export/Import (ui.js) is the backup.
 //
 // Stores:
-//   scans      key cardId  { cardId, avatarHash, version, answers, scannedAt }
+//   scans      key cardId  { cardId, avatarPath, avatarHash, answers, asked: { question: key },
+//                            scannedAt, noAvatar? }   (0.1 scans had `version` instead of `asked`)
 //   decisions  auto key    { cardId, decision: delete|keep|implied-keep, learn, at,
 //                            name, creator, tags, answers }   (a log, never rewritten)
-//   avatars    key cardId  { cardId, dataUrl, savedAt }  avatars kept from deleted,
+//   avatars    key cardId  { cardId, dataUrl, hash, avatarPath, card, savedAt }  avatars kept from deleted,
 //                            unscanned cards so they can still be scanned
 
 const CTRDb = (() => {
@@ -81,6 +82,8 @@ const CTRDb = (() => {
     putAvatars: (list) => tx("avatars", "readwrite", (s) => list.forEach((a) => s.put(a))),
     allAvatarIds: () => tx("avatars", "readonly", (s) => s.getAllKeys()),
     deleteAvatar: (cardId) => tx("avatars", "readwrite", (s) => void s.delete(cardId)),
+    deleteAvatars: (ids) => tx("avatars", "readwrite", (s) => ids.forEach((id) => s.delete(id))),
+    deleteScans: (ids) => tx("scans", "readwrite", (s) => ids.forEach((id) => s.delete(id))),
     async clearAll() {
       await tx(["scans", "decisions", "avatars"], "readwrite", (a, b, c) => {
         a.clear();

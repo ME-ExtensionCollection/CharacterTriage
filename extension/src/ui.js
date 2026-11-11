@@ -10,6 +10,10 @@ const CTRUi = (() => {
   let connections = null;
   let connectionError = "";
   let tagsLearnOnly = false;
+  let tagSource = "card"; // "card" tags or "picture" tags in "Tags you delete"
+  let pending = null; // CTRStore.pendingCounts(), once per render
+  let storage = null; // last CTRStore.storageStats()
+  let clearing = false; // "Clear everything" confirm row shown
 
   /** h("div.a.b", { text, attrs, on }, ...children) */
   function h(spec, { text, attrs, on, ...props } = {}, ...children) {
@@ -136,8 +140,9 @@ const CTRUi = (() => {
     if (!root) return;
     const scrollTop = root.querySelector(".ctr-panel")?.scrollTop ?? 0;
     const active = document.activeElement;
-    // Do not rebuild under the user's typing in the profile box.
-    if (active?.classList?.contains("ctr-profile") && root.contains(active)) {
+    pending = CTRStore.pendingCounts();
+    // Do not rebuild under the user's typing.
+    if (root.contains(active) && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && /^(text|search|)$/u.test(active.type)))) {
       renderLive();
       return;
     }
@@ -146,10 +151,12 @@ const CTRUi = (() => {
       { attrs: { role: "dialog", "aria-modal": "true", "aria-label": "Char Triage", tabindex: "-1" } },
       h("header.ctr-head", {}, h("h2", { text: "Char Triage" }), h("button.ctr-btn.ctr-close", { text: "×", attrs: { type: "button", title: "Close (Esc)", "aria-label": "Close" }, on: { click: close } })),
       connectionSection(),
+      categoriesSection(),
       scanSection(),
       modelSection(),
       tagsSection(),
       backupSection(),
+      storageSection(),
     );
     root.replaceChildren(panel);
     panel.scrollTop = scrollTop;
@@ -175,26 +182,31 @@ const CTRUi = (() => {
       on: { change: (e) => CTRStore.saveSettings({ profile: e.target.value }) },
     });
     const learn = h("label.ctr-check", {}, h("input.ctr-learn", { attrs: { type: "checkbox" }, checked: s.learnFromDeletes, on: { change: (e) => CTRStore.saveSettings({ learnFromDeletes: e.target.checked }) } }), " Learn from deletes by default (the delete dialog can change it per card)");
+    const pause = h(
+      "label.ctr-check",
+      { attrs: { title: "While on, cards you open in the Character Manager and don't delete are not counted as fine. Handy while you hunt one category and leave the rest for later." } },
+      h("input.ctr-pause-implied", { attrs: { type: "checkbox" }, checked: s.pauseImplied, on: { change: (e) => CTRStore.saveSettings({ pauseImplied: e.target.checked }) } }),
+      " Pause automatic keeps (cards you open but don't delete)",
+    );
     return section(
       "Vision model",
       h("label.ctr-field", {}, h("span", { text: "Connection" }), select),
       connectionError ? h("p.ctr-error", { text: `Could not list connections: ${connectionError}` }) : null,
       h("p.ctr-muted", { text: "Needs a vision model (llama.cpp with --mmproj). Requests go through Marinara's server." }),
       h("label.ctr-field", {}, h("span", { text: "Dislike profile" }), profile),
-      h("p.ctr-muted", { text: "Only a starting point before you have made ~30 decisions. Changing it means a new scan." }),
+      h("p.ctr-muted", { text: "A starting point before you have made ~30 decisions. Changing it only re-asks this one question." }),
       learn,
+      pause,
     );
   }
 
   function scanStatus() {
     const st = CTRScan.state;
-    const version = CTR.scanVersion(CTRStore.settings.profile);
-    let current = 0;
-    for (const sc of CTRStore.scans.values()) if (sc.version === version) current += 1;
     const total = CTRStore.cards.length;
-    const parts = [`${current.toLocaleString()} of ${total.toLocaleString()} cards scanned`];
+    const left = pending?.cardsPending ?? 0;
+    const parts = [left ? `${(total - left).toLocaleString()} of ${total.toLocaleString()} cards fully scanned · ${left.toLocaleString()} with questions to ask` : `All ${total.toLocaleString()} cards scanned`];
     if (st.running) {
-      parts.push(`${st.pilot ? "pilot" : "this run"}: ${(st.done + st.failed).toLocaleString()} of ${st.total.toLocaleString()}`);
+      parts.push(`${st.pilot ? "pilot" : st.picked ? "picked cards" : "this run"}: ${(st.done + st.failed).toLocaleString()} of ${st.total.toLocaleString()}`);
       if (st.reused) parts.push(`${st.reused} reused`);
       const eta = CTRScan.eta();
       if (eta !== null) parts.push(`about ${fmtDuration(eta)} left`);
@@ -211,6 +223,62 @@ const CTRUi = (() => {
     );
   }
 
+  /** Your categories: each is one 0-3 question, and a picture tag (image:<id>, image:<id>:2 …). */
+  function categoriesSection() {
+    const s = CTRStore.settings;
+    const list = s.categories;
+    const total = CTRStore.cards.length;
+    const save = (next) => CTRStore.saveSettings({ categories: next });
+    const update = (id, patch) => save(list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    const rows = list.map((c) => {
+      const missing = pending?.byQuestion.get(CTR.categoryField(c.id));
+      const status = c.enabled ? (missing ? `asked on ${(total - missing).toLocaleString()} of ${total.toLocaleString()}` : "asked on every card") : "off";
+      return h(
+        "li.ctr-category",
+        { attrs: { "data-id": c.id } },
+        h(
+          "div.ctr-category-head",
+          {},
+          h("label.ctr-check", {}, h("input.ctr-category-on", { attrs: { type: "checkbox", "aria-label": `Ask about ${c.label}` }, checked: c.enabled, on: { change: (e) => update(c.id, { enabled: e.target.checked }) } }), h("strong", { text: ` ${c.label}` })),
+          h("code.ctr-muted", { text: `image:${c.id}` }),
+          h("span.ctr-muted.ctr-category-status", { text: status }),
+          h("button.ctr-btn.ctr-category-delete", { text: "Remove", attrs: { type: "button", title: "Stop asking this. Its answers stay until Clean up." }, on: { click: () => save(list.filter((x) => x.id !== c.id)) } }),
+        ),
+        h("input.ctr-input.ctr-category-question", {
+          attrs: { type: "text", "aria-label": `Question for ${c.label}`, title: "What the model looks for. Changing it re-asks only this question." },
+          value: c.question,
+          on: { change: (e) => update(c.id, { question: e.target.value.trim() || c.label }) },
+        }),
+      );
+    });
+    const have = new Set(list.map((c) => c.id));
+    const presets = CTR.CATEGORY_PRESETS.filter((p) => !have.has(p.id));
+    const label = h("input.ctr-input.ctr-new-label", { attrs: { type: "text", placeholder: "Name, e.g. Tentacles", "aria-label": "New category name" } });
+    const question = h("input.ctr-input.ctr-new-question", { attrs: { type: "text", placeholder: "What to look for, e.g. tentacles wrapped around a character", "aria-label": "New category question" } });
+    const add = () => {
+      const id = CTR.slug(label.value);
+      if (!id) return label.focus();
+      if (have.has(id)) return toast(`There is already a category “${id}”.`, { error: true });
+      save([...list, { id, label: label.value.trim(), question: question.value.trim() || label.value.trim(), enabled: true }]);
+    };
+    return section(
+      "Categories",
+      h("p.ctr-muted", {
+        text: "Things you want found in pictures. Each is asked as 0 none, 1 hint, 2 clearly shown, 3 the focus, and becomes a picture tag in the Character Manager: image:inflation is any level, image:inflation:2 is 2 or more. Adding or changing one only asks that question.",
+      }),
+      rows.length ? h("ul.ctr-categories", {}, rows) : null,
+      presets.length
+        ? h(
+            "div.ctr-row.ctr-presets",
+            {},
+            h("span.ctr-muted", { text: "Examples:" }),
+            presets.map((p) => h("button.ctr-btn.ctr-preset", { text: `+ ${p.label}`, attrs: { type: "button", "data-id": p.id, title: p.question }, on: { click: () => save([...list, { ...p, enabled: true }]) } })),
+          )
+        : null,
+      h("div.ctr-row.ctr-new-category", {}, label, question, h("button.ctr-btn.ctr-add-category", { text: "Add", attrs: { type: "button" }, on: { click: add } })),
+    );
+  }
+
   function scanSection() {
     const st = CTRScan.state;
     const s = CTRStore.settings;
@@ -219,7 +287,7 @@ const CTRUi = (() => {
     const buttons = st.running
       ? [h("button.ctr-btn.ctr-stop", { text: st.stopping ? "Stopping…" : "Stop", attrs: { type: "button", disabled: st.stopping }, on: { click: () => CTRScan.stop() } })]
       : [
-          h("button.ctr-btn.ctr-on.ctr-start", { text: "Scan library", attrs: { type: "button", disabled: !s.connectionId, title: "Scan every card not scanned yet, newest first. Runs while Marinara is open; resumes after a reload." }, on: { click: startScan(false) } }),
+          h("button.ctr-btn.ctr-on.ctr-start", { text: "Scan library", attrs: { type: "button", disabled: !s.connectionId, title: "Ask every card the questions it hasn't been asked yet, newest first. Runs while Marinara is open; resumes after a reload. To scan only some cards, select them in the Character Manager and use Ask Char Triage." }, on: { click: startScan(false) } }),
           h("button.ctr-btn.ctr-pilot", { text: `Pilot: ${CTRScan.PILOT_SIZE} decided cards`, attrs: { type: "button", disabled: !s.connectionId, title: "Scan only cards you already kept or deleted, to check the model against your own calls." }, on: { click: startScan(true) } }),
         ];
     const concurrency = h("input.ctr-input.ctr-concurrency", {
@@ -262,7 +330,9 @@ const CTRUi = (() => {
   }
 
   function tagsSection() {
-    const list = CTR.dislikedTags(CTRStore.decisions, { learnOnly: tagsLearnOnly }).slice(0, 60);
+    const picture = tagSource === "picture";
+    const pictureTagsOf = (d) => (CTRStore.scans.get(d.cardId)?.answers ?? d.answers)?.tags ?? [];
+    const list = CTR.dislikedTags(CTRStore.decisions, picture ? { learnOnly: tagsLearnOnly, tagsOf: pictureTagsOf, keyOf: (t) => t } : { learnOnly: tagsLearnOnly }).slice(0, 60);
     const ci = importer();
     // Char Importer spells tags its own way (dark_elf), so let it say what is listed.
     const listed = (tag) => {
@@ -301,7 +371,7 @@ const CTRUi = (() => {
             },
           },
         }),
-        h("button.ctr-btn.ctr-blacklist", {
+        picture ? null : h("button.ctr-btn.ctr-blacklist", {
           text: listed(t.tag) ? "On blacklist" : "Blacklist",
           attrs: {
             type: "button",
@@ -325,6 +395,17 @@ const CTRUi = (() => {
     return section(
       "Tags you delete",
       h("p.ctr-muted", { text: "Tags on at least 5 deleted cards that you delete more often than usual. Strongest first." }),
+      h(
+        "div.ctr-row",
+        {},
+        ["card", "picture"].map((src) =>
+          h(`button.ctr-btn.ctr-tag-source${tagSource === src ? ".ctr-on" : ""}`, {
+            text: src === "card" ? "Card tags" : "Picture tags",
+            attrs: { type: "button", "data-source": src },
+            on: { click: () => ((tagSource = src), schedule()) },
+          }),
+        ),
+      ),
       filter,
       rows.length ? h("ul.ctr-tags", {}, rows) : h("p.ctr-muted", { text: "Nothing yet: delete and keep some cards first." }),
     );
@@ -358,6 +439,61 @@ const CTRUi = (() => {
           },
         }),
       ),
+    );
+  }
+
+  /** Counts, the browser's usage estimate, Clean up and Clear everything. */
+  function storageSection() {
+    if (!storage) void CTRStore.storageStats().then((st) => ((storage = st), schedule()));
+    const st = storage;
+    const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
+    const typed = h("input.ctr-input.ctr-clear-typed", { attrs: { type: "text", placeholder: "Type CLEAR", "aria-label": "Type CLEAR to confirm" } });
+    const confirmRow = clearing
+      ? h(
+          "div.ctr-row",
+          {},
+          h("span.ctr-error", { text: "Deletes every scan and decision in this browser. Export first if you might want them." }),
+          typed,
+          h("button.ctr-btn.ctr-clear-confirm", {
+            text: "Clear",
+            attrs: { type: "button" },
+            on: {
+              click: async () => {
+                if (typed.value.trim() !== "CLEAR") return typed.focus();
+                await CTRStore.clearAll();
+                clearing = false;
+                storage = null;
+                toast("Cleared Char Triage's data in this browser.");
+              },
+            },
+          }),
+          h("button.ctr-btn", { text: "Cancel", attrs: { type: "button" }, on: { click: () => ((clearing = false), schedule()) } }),
+        )
+      : null;
+    return section(
+      "Storage",
+      h("p.ctr-muted", {
+        text: st
+          ? `${st.scans.toLocaleString()} scans, ${st.decisions.toLocaleString()} decisions, ${st.avatars.toLocaleString()} kept avatars, in this browser's IndexedDB (not Marinara's extension storage).${st.usage !== null ? ` This site uses ${mb(st.usage)}${st.quota ? ` of ${mb(st.quota)} allowed` : ""}.` : ""}${st.orphans ? ` ${st.orphans.toLocaleString()} scans are for cards no longer in the library.` : ""}`
+          : "Counting…",
+      }),
+      h(
+        "div.ctr-row",
+        {},
+        h("button.ctr-btn.ctr-cleanup", {
+          text: "Clean up",
+          attrs: { type: "button", title: "Remove scans of deleted cards nothing refers to, kept avatars no longer needed, and answers to removed categories. Decisions are never removed." },
+          on: {
+            click: async () => {
+              const r = await CTRStore.cleanup();
+              storage = null;
+              toast(`Removed ${r.scans.toLocaleString()} scans and ${r.avatars.toLocaleString()} kept avatars; trimmed ${r.trimmed.toLocaleString()} scans.`);
+            },
+          },
+        }),
+        h("button.ctr-btn.ctr-clear", { text: "Clear everything…", attrs: { type: "button" }, on: { click: () => ((clearing = true), schedule()) } }),
+      ),
+      confirmRow,
     );
   }
 

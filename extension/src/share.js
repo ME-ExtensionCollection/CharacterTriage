@@ -30,6 +30,11 @@ const CTRShare = (() => {
     recordKeep: (cards, options) => CTRStore.recordKeep(cards, options),
     /** { running, done, failed, total, finishedAt, … } of the current or last scan. */
     scanState: () => ({ ...CTRScan.state }),
+    /** Map cardId -> picture tags ("image:long_hair", "image:inflation:2", …). Never written to cards. */
+    imageTags: () => CTRStore.imageTags(),
+    imageTagsOf: (id) => CTRStore.imageTags().get(id) ?? [],
+    /** Ask the vision model about these cards (only what each still needs). Resolves with how many had something to ask. */
+    scanCards: (ids) => CTRScan.scanCards(ids),
     openPanel: () => CTRUi.open(),
   });
 
