@@ -461,7 +461,12 @@ const CTR = (() => {
     return { dislike: list.slice(0, count), like: list.slice(-count).reverse() };
   }
 
-  const bucket = (score) => (score === null || score === undefined ? null : Math.min(5, 1 + Math.floor(score * 5)));
+  /**
+   * The 0-5 number on cards: the score x 5, rounded. 0 ~ fine, 3 a coin toss,
+   * 5 ~ certainly disliked. Profile ratings 1-5 (scores 0, .25, .5, .75, 1)
+   * land on 0, 1, 3, 4, 5.
+   */
+  const bucket = (score) => (score === null || score === undefined ? null : Math.max(0, Math.min(5, Math.round(score * 5))));
 
   // ── Decisions -> training rows ──
 

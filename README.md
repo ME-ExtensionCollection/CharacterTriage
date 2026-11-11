@@ -7,7 +7,7 @@ A Marinara Engine External Extension for cleaning up big, bulk-imported characte
 1. **Scan.** Each avatar is shrunk to 512 px and sent to a vision model through one of your Marinara connections. Built-in questions: art style, AI artifacts, image quality, low effort (screenshots, memes, text), text or watermarks, NSFW, framing, number of characters, gender presentation, species, background, colours, mood, and **every danbooru-style tag that fits** (no limit; a guard at 100 only stops a runaway reply, and the Storage section counts any reply that hit it). Plus one 0–3 question per **category** you turn on, and the dislike profile if you wrote one. The model must answer in JSON (a JSON schema is sent), with thinking turned off.
    Each question has its own version. Adding a category, rewording one, or editing the profile only asks that question again; a card whose avatar file changed is asked everything again. Scans from 0.1 keep their answers and only get the new questions.
 2. **Decide.** As you work in the Character Manager, every delete is logged as "dislike" and every **Keep** as "fine". Cards you open in the details pane and don't delete count as a weak keep.
-3. **Learn.** A small logistic regression runs in the browser on the answers plus the card's tags and creator. It retrains a moment after each batch of decisions and scores every card from 0 to 1, shown as 1 (likely fine) to 5 (likely disliked).
+3. **Learn.** A small logistic regression runs in the browser on the answers plus the card's tags and creator. It retrains a moment after each batch of decisions and scores every card from 0 to 1, shown on cards as 0 (likely fine) to 5 (likely disliked): the score × 5, rounded, so 3 is a coin toss.
 
 Before you have about 30 decisions (at least 5 deletes and 5 keeps), the score comes from the optional **dislike profile**: a few lines describing what you don't like, which the model rates each image against.
 
@@ -37,9 +37,10 @@ On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel), 0.1's questions too
 | --- | --- |
 | `ready()` | resolves when settings, scans and decisions are loaded |
 | `scores()` | `Map` card id → score 0..1 (cards without evidence are missing) |
-| `scoreOf(id)`, `bucketOf(id)` | one card's score, or its 1–5 band |
+| `scoreOf(id)`, `bucketOf(id)` | one card's score, or its 0–5 number |
 | `answers(id)` | the vision model's answers for a card, or `null` |
 | `decisionOf(id)` | `"delete"`, `"keep"`, `"implied-keep"` or `null` |
+| `decisions()` | `Map` card id → its latest decision |
 | `learnFromDeletes()` | the default for the delete dialog |
 | `beforeDelete(cards, { learnById })` | log deletes (call before deleting); `learnById` overrides the default per card |
 | `recordKeep(idsOrCards, { implied })` | log keeps |

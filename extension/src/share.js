@@ -6,11 +6,17 @@
 const CTRShare = (() => {
   "use strict";
 
-  const latest = (id) => {
-    let best = null;
-    for (const d of CTRStore.decisions) if (d.cardId === id && (!best || d.at >= best.at)) best = d;
-    return best;
+  // cardId -> latest decision, rebuilt when the decision log grows.
+  let decisionMap = null;
+  let decisionCount = -1;
+  const decisionsById = () => {
+    if (!decisionMap || decisionCount !== CTRStore.decisions.length) {
+      decisionMap = new Map(CTR.latestDecisions(CTRStore.decisions).map((d) => [d.cardId, d.decision]));
+      decisionCount = CTRStore.decisions.length;
+    }
+    return decisionMap;
   };
+  const latest = (id) => decisionsById().get(id) ?? null;
 
   const api = Object.freeze({
     version: 1,
@@ -19,10 +25,12 @@ const CTRShare = (() => {
     /** Map cardId -> dislike score 0..1 (cards without enough evidence are missing). */
     scores: () => CTRStore.scores,
     scoreOf: (id) => CTRStore.scores.get(id) ?? null,
-    /** 1..5, or null. */
+    /** 0..5 (score x 5, rounded), or null. */
     bucketOf: (id) => CTR.bucket(CTRStore.scores.get(id)),
     answers: (id) => CTRStore.scans.get(id)?.answers ?? null,
-    decisionOf: (id) => latest(id)?.decision ?? null,
+    decisionOf: (id) => latest(id),
+    /** Map cardId -> "delete" | "keep" | "implied-keep" (latest decision per card). */
+    decisions: () => decisionsById(),
     learnFromDeletes: () => CTRStore.settings.learnFromDeletes,
     /** cards: [{ id, name, creator, tags, avatarPath }] or ids. Log them before deleting. */
     beforeDelete: (cards, options) => CTRStore.beforeDelete(cards, options),

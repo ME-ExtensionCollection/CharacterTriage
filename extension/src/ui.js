@@ -354,13 +354,13 @@ const CTRUi = (() => {
     } else {
       lines.push(`Learning starts at ${CTRStore.MIN_ROWS} decisions with at least 5 deletes and 5 keeps. Until then, scores come from the dislike profile.`);
     }
-    const counts = [0, 0, 0, 0, 0];
-    for (const v of CTRStore.scores.values()) counts[CTR.bucket(v) - 1] += 1;
+    const counts = [0, 0, 0, 0, 0, 0];
+    for (const v of CTRStore.scores.values()) counts[CTR.bucket(v)] += 1;
     const top = st.top;
     return section(
       "What it learned",
       ...lines.filter(Boolean).map((t) => h("p", { text: t })),
-      CTRStore.scores.size ? h("p.ctr-muted", { text: `Cards by score (1 = likely fine, 5 = likely disliked): ${counts.map((c, i) => `${i + 1}: ${c.toLocaleString()}`).join(" · ")}` }) : null,
+      CTRStore.scores.size ? h("p.ctr-muted", { text: `Cards by score (0 = likely fine, 5 = likely disliked): ${counts.map((c, i) => `${i}: ${c.toLocaleString()}`).join(" · ")}` }) : null,
       top
         ? h(
             "div.ctr-weights",

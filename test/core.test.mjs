@@ -227,6 +227,6 @@ test("backup merge: decision log union, scans merged per question", () => {
 });
 
 test("buckets", () => {
-  assert.deepEqual([0, 0.19, 0.2, 0.5, 0.99, 1].map(CTR.bucket), [1, 1, 2, 3, 5, 5]);
+  assert.deepEqual([0, 0.05, 0.11, 0.25, 0.5, 0.75, 0.95, 1].map(CTR.bucket), [0, 0, 1, 1, 3, 4, 5, 5]);
   assert.equal(CTR.bucket(null), null);
 });
