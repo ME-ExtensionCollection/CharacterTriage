@@ -410,6 +410,46 @@ await withPage("storage-and-cleanup", async (page) => {
   assert.equal(await page.evaluate(() => window.marinaraCharTriage.answers("card-00001")), null);
 });
 
+await withPage("hints-and-scan-status", async (page) => {
+  await openPanel(page);
+  await chooseConnection(page);
+  // Decisions before any scan: no picture scores, but hints from card tags (renders carry "3D").
+  await decide(page, "(c) => Number(c.id.slice(5)) % 3 === 0");
+  await page.waitForFunction(() => window.marinaraCharTriage.hints().size > 250, null, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => window.marinaraCharTriage.scores().size), 0, "no scan, no score");
+  const hintGap = await page.evaluate(() => {
+    const h = window.marinaraCharTriage.hints();
+    const r = [];
+    const o = [];
+    for (const [id, v] of h) (Number(id.slice(5)) % 3 === 0 ? r : o).push(v);
+    return r.reduce((a, b) => a + b, 0) / r.length - o.reduce((a, b) => a + b, 0) / o.length;
+  });
+  assert.ok(hintGap > 0.2, `hint should lean towards the 3D-tagged cards (gap ${hintGap})`);
+  assert.equal(await page.evaluate(() => window.marinaraCharTriage.scanStatus().size), 0);
+  // Scan: decided cards first, then the rest with the likely-disliked (hinted) ones first.
+  await scanAndWait(page);
+  const order = (await asked()).map((a) => a.card).filter((n) => n >= 120);
+  const firstRest = order.slice(0, 40);
+  const renders = firstRest.filter((n) => n % 3 === 0).length;
+  assert.ok(renders > 25, `hinted cards first: ${renders} of the first 40 undecided scans were 3D-tagged`);
+  // Scanned: picture scores for scanned cards, no hints left.
+  await page.waitForFunction(() => window.marinaraCharTriage.scores().size >= 290);
+  // Only the 6 cards with no avatar (they can never be scanned) keep a hint.
+  assert.equal(await page.evaluate(() => window.marinaraCharTriage.hints().size), 6);
+  const st = await page.evaluate(() => Object.fromEntries([...window.marinaraCharTriage.scanStatus()].reduce((m, [, v]) => m.set(v, (m.get(v) ?? 0) + 1), new Map())));
+  assert.deepEqual(st, { current: 294, "no-avatar": 6 });
+  // A new category: every scanned card becomes outdated.
+  await page.click(".ctr-preset[data-id='inflation']");
+  await page.waitForFunction(() => [...window.marinaraCharTriage.scanStatus().values()].filter((v) => v === "outdated").length === 294);
+  // Full re-ask of picked cards: every question, even ones already answered; no reuse from twin images.
+  const before = (await asked()).length;
+  assert.equal(await page.evaluate(() => window.marinaraCharTriage.scanCards(["card-00097", "card-00098"], { all: true })), 2);
+  await page.waitForFunction(() => { const s = window.marinaraCharTriage.scanState(); return !s.running && s.picked; });
+  const again = (await asked()).slice(before);
+  assert.equal(again.length, 2);
+  assert.ok(again.every((a) => a.fields.includes("style") && a.fields.includes("cat_inflation")), JSON.stringify(again.map((a) => a.fields.length)));
+});
+
 await withPage("deleted-card-still-scanned", async (page) => {
   await openPanel(page);
   // Delete a card before it was ever scanned, then scan.

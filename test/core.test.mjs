@@ -179,9 +179,25 @@ test("training rows: newest decision per card, learn=false deletes skipped, impl
     { cardId: "c", decision: "implied-keep", at: "2026-01-01", tags: [] },
   ];
   const rows = CTR.trainingRows(decisions, (id) => (id === "a" ? answers() : null));
-  assert.deepEqual(rows.map((r) => [r.cardId, r.y, r.w]), [["a", 1, 1], ["c", 0, CTR.IMPLIED_WEIGHT]]);
+  // Picture model: only scanned cards, only picture features.
+  assert.deepEqual(rows.map((r) => [r.cardId, r.y, r.w]), [["a", 1, 1]]);
   assert.equal(rows[0].x.get("style=anime"), 1, "the scan (with later questions) beats the snapshot");
-  assert.equal(rows[1].x.get("unscanned"), 1);
+  assert.ok(![...rows[0].x.keys()].some((k) => k.startsWith("t:") || k.startsWith("c:")), "no card tags or creator");
+  // Hint model: every decision (learn=false too), card tags and creator only.
+  const withTags = decisions.map((d) => ({ ...d, tags: ["Hyper"], creator: "Kestrel" }));
+  const hint = CTR.hintRows(withTags);
+  assert.deepEqual(hint.map((r) => [r.cardId, r.y, r.w]), [["a", 1, 1], ["b", 1, 1], ["c", 0, CTR.IMPLIED_WEIGHT]]);
+  assert.deepEqual([...hint[0].x.keys()].sort(), ["c:kestrel", "t:hyper"]);
+});
+
+test("scan status: current, outdated, no avatar, never", () => {
+  const qs = CTR.activeQuestions({ categories: [inflation] });
+  const done = CTR.mergeAnswers(null, { cardId: "x", avatarPath: "/a.png", questions: qs, answers: answers() });
+  assert.equal(CTR.scanStatus(done, qs, "/a.png"), "current");
+  assert.equal(CTR.scanStatus(done, CTR.activeQuestions({ categories: [inflation, { ...vore, enabled: true }] }), "/a.png"), "outdated");
+  assert.equal(CTR.scanStatus(done, qs, "/b.png"), "outdated", "new avatar file");
+  assert.equal(CTR.scanStatus({ cardId: "y", noAvatar: true, asked: {}, answers: null }, qs, ""), "no-avatar");
+  assert.equal(CTR.scanStatus(undefined, qs, "/a.png"), null);
 });
 
 test("disliked tags: smoothed, needs support, ranks by strength; picture tags too", () => {

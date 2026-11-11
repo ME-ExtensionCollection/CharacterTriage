@@ -22,7 +22,7 @@ const CTRShare = (() => {
     version: 1,
     /** Resolves once settings, scans and decisions are loaded. */
     ready: () => CTRStore.load(),
-    /** Map cardId -> dislike score 0..1 (cards without enough evidence are missing). */
+    /** Map cardId -> dislike score 0..1 from the scan (picture model or profile rating); scanned cards only. */
     scores: () => CTRStore.scores,
     scoreOf: (id) => CTRStore.scores.get(id) ?? null,
     /** 0..5 (score x 5, rounded), or null. */
@@ -41,8 +41,15 @@ const CTRShare = (() => {
     /** Map cardId -> picture tags ("image:long_hair", "image:inflation:2", …). Never written to cards. */
     imageTags: () => CTRStore.imageTags(),
     imageTagsOf: (id) => CTRStore.imageTags().get(id) ?? [],
-    /** Ask the vision model about these cards (only what each still needs). Resolves with how many had something to ask. */
-    scanCards: (ids) => CTRScan.scanCards(ids),
+    /**
+     * Ask the vision model about these cards: only what each still needs, or
+     * every question with { all: true }. Resolves with how many were queued.
+     */
+    scanCards: (ids, options) => CTRScan.scanCards(ids, options),
+    /** Map cardId -> 0..1 from card tags + creator, for unscanned cards only: a hint, not a scan result. */
+    hints: () => CTRStore.hints,
+    /** Map cardId -> "current" | "outdated" | "no-avatar"; never-scanned cards are missing. */
+    scanStatus: () => CTRStore.scanStatuses(),
     openPanel: () => CTRUi.open(),
   });
 

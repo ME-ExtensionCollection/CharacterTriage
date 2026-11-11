@@ -7,7 +7,9 @@ A Marinara Engine External Extension for cleaning up big, bulk-imported characte
 1. **Scan.** Each avatar is shrunk to 512 px and sent to a vision model through one of your Marinara connections. Built-in questions: art style, AI artifacts, image quality, low effort (screenshots, memes, text), text or watermarks, NSFW, framing, number of characters, gender presentation, species, background, colours, mood, and **every danbooru-style tag that fits** (no limit; a guard at 100 only stops a runaway reply, and the Storage section counts any reply that hit it). Plus one 0–3 question per **category** you turn on, and the dislike profile if you wrote one. The model must answer in JSON (a JSON schema is sent), with thinking turned off.
    Each question has its own version. Adding a category, rewording one, or editing the profile only asks that question again; a card whose avatar file changed is asked everything again. Scans from 0.1 keep their answers and only get the new questions.
 2. **Decide.** As you work in the Character Manager, every delete is logged as "dislike" and every **Keep** as "fine". Cards you open in the details pane and don't delete count as a weak keep.
-3. **Learn.** A small logistic regression runs in the browser on the answers plus the card's tags and creator. It retrains a moment after each batch of decisions and scores every card from 0 to 1, shown on cards as 0 (likely fine) to 5 (likely disliked): the score × 5, rounded, so 3 is a coin toss.
+3. **Learn.** A small logistic regression runs in the browser on the scan answers only (never card tags or creator, which needn't describe the picture), trained on decisions about scanned cards. It retrains a moment after each batch of decisions and scores every card from 0 to 1, shown on cards as 0 (likely fine) to 5 (likely disliked): the score × 5, rounded, so 3 is a coin toss.
+
+Unscanned cards get no score. A separate **hint** from card tags and creator (artists often predict the art) is shown for them as `?N` in the Character Manager, and *Scan library* does the cards it thinks you'd dislike first.
 
 Before you have about 30 decisions (at least 5 deletes and 5 keeps), the score comes from the optional **dislike profile**: a few lines describing what you don't like, which the model rates each image against.
 
@@ -36,7 +38,7 @@ On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel), 0.1's questions too
 | Method | |
 | --- | --- |
 | `ready()` | resolves when settings, scans and decisions are loaded |
-| `scores()` | `Map` card id → score 0..1 (cards without evidence are missing) |
+| `scores()` | `Map` card id → score 0..1 from the scan, scanned cards only |
 | `scoreOf(id)`, `bucketOf(id)` | one card's score, or its 0–5 number |
 | `answers(id)` | the vision model's answers for a card, or `null` |
 | `decisionOf(id)` | `"delete"`, `"keep"`, `"implied-keep"` or `null` |
@@ -46,7 +48,9 @@ On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel), 0.1's questions too
 | `recordKeep(idsOrCards, { implied })` | log keeps |
 | `scanState()` | progress of the current or last scan |
 | `imageTags()`, `imageTagsOf(id)` | picture tags (`image:…`): a `Map` card id → list, a new map whenever they change |
-| `scanCards(ids)` | ask about these cards now (only what each still needs); resolves with how many had something to ask |
+| `scanCards(ids, { all })` | ask about these cards now (only what each still needs, or every question with `all: true`); resolves with how many were queued |
+| `hints()` | `Map` card id → 0..1 from card tags + creator, unscanned cards only |
+| `scanStatus()` | `Map` card id → `"current"`, `"outdated"` (new or changed questions) or `"no-avatar"`; never-scanned cards are missing |
 | `openPanel()` | open the panel |
 
 `marinara-char-triage:changed` fires on `window` when scores change. Check for the methods you need, not the version.

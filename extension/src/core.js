@@ -482,18 +482,55 @@ const CTR = (() => {
     return [...byCard.values()];
   }
 
-  /** Deletes with learn=false only feed the tag statistics, not the model. */
+  /** A card's own tags and creator only, for the "worth scanning" hint. */
+  function metaFeatures(card = {}) {
+    const x = new Map();
+    for (const tag of card.tags ?? []) {
+      const t = normTag(tag);
+      if (t) x.set(`t:${t}`, 1);
+    }
+    if (card.creator) x.set(`c:${normTag(card.creator)}`, 1);
+    return x;
+  }
+
+  /**
+   * Training rows for the picture model: only decisions on cards that have
+   * answers, and only picture features (card tags don't describe the image).
+   * Deletes with learn=false only feed the tag statistics, not the model.
+   */
   function trainingRows(decisions, answersFor, options = {}) {
     const rows = [];
     for (const d of latestDecisions(decisions)) {
       if (d.decision === "delete" && d.learn === false) continue;
       const answers = answersFor(d.cardId) ?? d.answers ?? null;
+      if (!answers) continue;
       const y = d.decision === "delete" ? 1 : 0;
       const w = d.decision === "implied-keep" ? IMPLIED_WEIGHT : 1;
-      rows.push({ x: features(answers, d, options), y, w, cardId: d.cardId });
+      rows.push({ x: features(answers, d, { ...options, imageOnly: true }), y, w, cardId: d.cardId });
     }
     return rows;
   }
+
+  /**
+   * Training rows for the hint model: every decision (learn=false included,
+   * since it is about the card, not the picture), card tags and creator only.
+   */
+  function hintRows(decisions) {
+    return latestDecisions(decisions).map((d) => ({
+      x: metaFeatures(d),
+      y: d.decision === "delete" ? 1 : 0,
+      w: d.decision === "implied-keep" ? IMPLIED_WEIGHT : 1,
+      cardId: d.cardId,
+    }));
+  }
+
+  /** "current" (every active question asked), "outdated" (some missing) or null (never scanned). */
+  function scanStatus(scan, questions, avatarPath) {
+    if (!scan || (!scan.answers && !scan.noAvatar)) return null;
+    if (scan.noAvatar) return CTR_NO_AVATAR;
+    return missingQuestions(scan, questions, avatarPath).length ? "outdated" : "current";
+  }
+  const CTR_NO_AVATAR = "no-avatar";
 
   /**
    * Tags you delete more than keep. Smoothed log-odds against your overall
@@ -615,6 +652,9 @@ const CTR = (() => {
     bucket,
     latestDecisions,
     trainingRows,
+    hintRows,
+    metaFeatures,
+    scanStatus,
     dislikedTags,
     makeBackup,
     mergeScan,

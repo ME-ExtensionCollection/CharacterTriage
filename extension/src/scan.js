@@ -35,8 +35,12 @@ const CTRScan = (() => {
   const sleep = (ms) => new Promise((resolve) => marinara.setTimeout(resolve, ms));
   const newest = (a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""));
 
-  /** A job for a card still in the library, or null when it has nothing left to ask. */
-  function liveJob(card, questions) {
+  /**
+   * A job for a card still in the library, or null when it has nothing left to
+   * ask. `all` re-asks every question (a full re-scan of a card you picked).
+   */
+  function liveJob(card, questions, { all = false } = {}) {
+    if (all && card.avatarPath) return { id: card.id, card, missing: questions };
     const missing = CTR.missingQuestions(CTRStore.scans.get(card.id), questions, card.avatarPath || "");
     return missing.length ? { id: card.id, card, missing } : null;
   }
@@ -44,9 +48,10 @@ const CTRScan = (() => {
   /**
    * What to scan, in order: avatars kept from deleted cards, then cards you
    * decided on, then the rest newest first. `ids` limits it to those cards
-   * (in that order); `pilot` to cards you decided on.
+   * (in that order, `all` re-asking everything); `pilot` to cards you decided on.
+   * Among the rest, cards the hint (card tags + creator) thinks you'd dislike go first.
    */
-  async function plan({ pilot = false, ids = null } = {}) {
+  async function plan({ pilot = false, ids = null, all = false } = {}) {
     const questions = CTRStore.questions();
     const decided = new Set(CTRStore.decisions.map((d) => d.cardId));
     const jobs = [];
@@ -59,28 +64,29 @@ const CTRScan = (() => {
     if (ids) {
       for (const id of ids) {
         const card = CTRStore.cardsById.get(id);
-        const job = card && liveJob(card, questions);
+        const job = card && liveJob(card, questions, { all });
         if (job) jobs.push(job);
       }
       return jobs;
     }
-    const live = [...CTRStore.cards].sort(newest);
+    const hint = CTRStore.hints;
+    const live = [...CTRStore.cards].sort((a, b) => (hint.get(b.id) ?? -1) - (hint.get(a.id) ?? -1) || newest(a, b));
     for (const card of live) if (decided.has(card.id)) jobs.push(liveJob(card, questions));
     if (!pilot) for (const card of live) if (!decided.has(card.id)) jobs.push(liveJob(card, questions));
     const list = jobs.filter(Boolean);
     return pilot ? list.slice(0, PILOT_SIZE) : list;
   }
 
-  async function start({ pilot = false, ids = null } = {}) {
+  async function start({ pilot = false, ids = null, all = false } = {}) {
     if (state.running) return;
     const { connectionId } = CTRStore.settings;
     if (!connectionId) throw new Error("Pick a connection first.");
-    if (!navigator.locks) return run({ pilot, ids, connectionId });
+    if (!navigator.locks) return run({ pilot, ids, all, connectionId });
     let ran = false;
     await navigator.locks.request(LOCK, { ifAvailable: true }, async (lock) => {
       if (!lock) return;
       ran = true;
-      await run({ pilot, ids, connectionId });
+      await run({ pilot, ids, all, connectionId });
     });
     if (!ran) throw new Error("Already scanning in another tab.");
   }
@@ -89,7 +95,7 @@ const CTRScan = (() => {
    * Scan just these cards (only their missing questions). Joins a running scan,
    * else starts one. Resolves with how many cards had something to ask.
    */
-  async function scanCards(ids) {
+  async function scanCards(ids, { all = false } = {}) {
     const list = [...new Set(ids)];
     if (state.running && current) {
       const questions = CTRStore.questions();
@@ -106,7 +112,7 @@ const CTRScan = (() => {
           continue;
         }
         const card = CTRStore.cardsById.get(id);
-        const job = card && liveJob(card, questions);
+        const job = card && liveJob(card, questions, { all });
         if (job) {
           front.push(job);
           added += 1;
@@ -118,18 +124,18 @@ const CTRScan = (() => {
       return front.length;
     }
     await CTRStore.refreshCatalog().catch(() => {});
-    const jobs = await plan({ ids: list });
+    const jobs = await plan({ ids: list, all });
     if (!jobs.length) return 0;
-    void start({ ids: list }).catch((error) => {
+    void start({ ids: list, all }).catch((error) => {
       state.lastError = error.message;
       emit();
     });
     return jobs.length;
   }
 
-  async function run({ pilot, ids, connectionId }) {
+  async function run({ pilot, ids, all = false, connectionId }) {
     await CTRStore.refreshCatalog().catch(() => {});
-    const jobs = await plan({ pilot, ids });
+    const jobs = await plan({ pilot, ids, all });
     state = { ...idle(), running: true, pilot, picked: !!ids, total: jobs.length, startedAt: Date.now() };
     const fullScan = !pilot && !ids;
     if (fullScan) CTRStore.saveSettings({ scanning: true });
@@ -196,7 +202,8 @@ const CTRScan = (() => {
         }
       }
       let answers = null;
-      const shared = image.hash ? byHash.get(image.hash) : undefined;
+      // A full re-ask (all) wants the model's fresh answer, not another card's.
+      const shared = image.hash && !all ? byHash.get(image.hash) : undefined;
       if (shared) {
         // Same image as another card (done, or still being asked about).
         answers = covered(await Promise.resolve(shared).catch(() => null), job.missing);

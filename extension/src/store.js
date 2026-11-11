@@ -27,7 +27,10 @@ const CTRStore = (() => {
   let decisions = [];
   let cards = []; // catalog summary
   let cardsById = new Map();
-  let scores = new Map(); // cardId -> 0..1
+  let scores = new Map(); // cardId -> 0..1, scanned cards only (picture model or profile rating)
+  let hints = new Map(); // cardId -> 0..1, unscanned cards only (card tags + creator)
+  let hintModel = null;
+  let statusMap = null; // cardId -> "current" | "outdated" | "no-avatar", built on demand
   let imageTagMap = null; // cardId -> ["image:…"], built on demand
   let model = null;
   let stats = { rows: 0, deletes: 0, keeps: 0, accuracy: null, mode: "none", trainedAt: null, top: null };
@@ -119,6 +122,7 @@ const CTRStore = (() => {
       void marinara.storage.patch({ settings: structuredClone(settings) }).catch((error) => marinara.log.error("Char Triage: saving settings failed", error));
     }, 400);
     // Categories decide picture tags and features.
+    if ("categories" in patch || "profile" in patch) statusMap = null;
     if (categoriesChanged) {
       imageTagMap = null;
       retrain();
@@ -138,6 +142,11 @@ const CTRStore = (() => {
 
   function retrain() {
     retrainTimer = 0;
+    // Hint model: card tags + creator, for unscanned cards ("worth scanning first").
+    const hRows = CTR.hintRows(decisions);
+    const hDeletes = hRows.filter((r) => r.y === 1).length;
+    hintModel = hRows.length >= MIN_ROWS && hDeletes >= 5 && hRows.length - hDeletes >= 5 ? CTR.train(hRows) : null;
+    // Picture model: scan answers only, on decided cards that were scanned.
     const rows = CTR.trainingRows(decisions, (id) => scans.get(id)?.answers ?? null, featureOptions());
     const deletes = rows.filter((r) => r.y === 1).length;
     const keeps = rows.length - deletes;
@@ -165,17 +174,41 @@ const CTRStore = (() => {
     scoreAll();
   }
 
-  /** Score every card in the catalog. Unscanned cards still get tag/creator evidence. */
+  /**
+   * Scanned cards get a picture score (the picture model, or the profile
+   * rating until it has enough decisions). Unscanned cards get only a hint
+   * from their card tags and creator, kept apart so it never looks like a scan result.
+   */
   function scoreAll() {
     const next = new Map();
-    const options = featureOptions();
+    const nextHints = new Map();
+    const options = { ...featureOptions(), imageOnly: true };
     for (const card of cards) {
       const answers = scans.get(card.id)?.answers ?? null;
-      if (model) next.set(card.id, CTR.predict(model, CTR.features(answers, card, options)));
-      else if (Number.isInteger(answers?.profile_match)) next.set(card.id, (answers.profile_match - 1) / 4);
+      if (answers) {
+        if (model) next.set(card.id, CTR.predict(model, CTR.features(answers, card, options)));
+        else if (Number.isInteger(answers.profile_match)) next.set(card.id, (answers.profile_match - 1) / 4);
+      } else if (hintModel) {
+        nextHints.set(card.id, CTR.predict(hintModel, CTR.metaFeatures(card)));
+      }
     }
     scores = next;
+    hints = nextHints;
+    statusMap = null;
     emit();
+  }
+
+  /** cardId -> "current" | "outdated" | "no-avatar"; cards never scanned are missing. */
+  function scanStatuses() {
+    if (!statusMap) {
+      const qs = questions();
+      statusMap = new Map();
+      for (const card of cards) {
+        const status = CTR.scanStatus(scans.get(card.id), qs, card.avatarPath || "");
+        if (status) statusMap.set(card.id, status);
+      }
+    }
+    return statusMap;
   }
 
   // ── Picture tags ──
@@ -279,8 +312,9 @@ const CTRStore = (() => {
   async function putScan(scan) {
     await CTRDb.putScan(scan);
     scans.set(scan.cardId, scan);
-    // A new map (not edited in place), so readers can tell the picture tags changed.
+    // New maps (not edited in place), so readers can tell the picture tags and status changed.
     imageTagMap = null;
+    statusMap = null;
     // Fresh answers change scores and picture tags; tell listeners in batches, not per scan.
     if (++scansSinceScore >= 25) {
       scansSinceScore = 0;
@@ -394,6 +428,7 @@ const CTRStore = (() => {
     recordKeep,
     putScan,
     imageTags,
+    scanStatuses,
     pendingCounts,
     storageStats,
     cleanup,
@@ -419,6 +454,9 @@ const CTRStore = (() => {
     },
     get scores() {
       return scores;
+    },
+    get hints() {
+      return hints;
     },
     get stats() {
       return stats;

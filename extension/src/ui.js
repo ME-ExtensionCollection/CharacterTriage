@@ -348,7 +348,7 @@ const CTRUi = (() => {
   function modelSection() {
     const st = CTRStore.stats;
     const lines = [];
-    lines.push(`${st.rows.toLocaleString()} decisions used: ${st.deletes.toLocaleString()} deletes, ${st.keeps.toLocaleString()} keeps.`);
+    lines.push(`${st.rows.toLocaleString()} decisions on scanned cards used: ${st.deletes.toLocaleString()} deletes, ${st.keeps.toLocaleString()} keeps. The score uses the picture only (scan answers), never card tags or creator.`);
     if (st.mode === "learned") {
       lines.push(st.accuracy === null ? "" : `Predicts your call ${pct(st.accuracy)} of the time on decisions it was not trained on.`);
     } else {
@@ -360,6 +360,9 @@ const CTRUi = (() => {
     return section(
       "What it learned",
       ...lines.filter(Boolean).map((t) => h("p", { text: t })),
+      CTRStore.hints.size
+        ? h("p.ctr-muted", { text: `${CTRStore.hints.size.toLocaleString()} unscanned cards have a hint from their card tags and creator (shown as ?N in the Character Manager). Scan library does the likely-disliked ones first.` })
+        : null,
       CTRStore.scores.size ? h("p.ctr-muted", { text: `Cards by score (0 = likely fine, 5 = likely disliked): ${counts.map((c, i) => `${i}: ${c.toLocaleString()}`).join(" · ")}` }) : null,
       top
         ? h(
