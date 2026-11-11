@@ -92,6 +92,9 @@ const CTR = (() => {
       // The last clause catches a real miss: buttocks filling the whole frame read as background shapes.
       question: "body parts drawn far larger than humanly possible (breasts bigger than the head, a belly like a beach ball, thighs wider than a doorway), including body parts so huge they fill the whole frame behind or around the character, which can look like background shapes",
       zero: "normal human proportions, including large breasts and curvy, chubby or muscular bodies a real person could have",
+      // Stricter than the shared levels: with "1: a little, or possibly" the model put
+      // merely chubby or busty cards at 1-2; this keeps them at 0-1 and the hypers at 2-3.
+      levels: "1: a little past realistic (large alone is not enough). 2: clearly impossible size. 3: the impossible size is the point of the picture. When unsure, 0.",
     },
     { id: "inflation", label: "Inflation", question: "a body or belly swollen up like a balloon (with air, liquid or similar), round and taut", zero: "normal bellies, pregnancy, chubby or fat bodies" },
     { id: "weight_gain", label: "Weight gain", question: "weight gain or extreme obesity as the theme (stuffing, feeding, a body far heavier than average)", zero: "slim, average, curvy, thick or chubby bodies" },
@@ -117,11 +120,12 @@ const CTR = (() => {
 
   const categoryField = (id) => `cat_${id}`;
 
-  /** "<what to look for>. 0: <what does not count>. 1: … When unsure, 0." */
+  /** "<what to look for>. 0: <what does not count>. 1: … When unsure, 0." A category may bring its own levels. */
   function categoryRubric(category) {
     const what = String(category.question || category.label || category.id).trim().replace(/[.\s]+$/u, "");
     const zero = String(category.zero || CATEGORY_ZERO).trim().replace(/[.\s]+$/u, "");
-    return `${what}. 0: ${zero}. ${CATEGORY_LEVELS}`;
+    const levels = String(category.levels || CATEGORY_LEVELS).trim();
+    return `${what}. 0: ${zero}. ${levels}`;
   }
 
   function categoryQuestion(category) {

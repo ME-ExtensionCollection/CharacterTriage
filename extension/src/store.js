@@ -62,6 +62,7 @@ const CTRStore = (() => {
         label: String(c.label || id).slice(0, 60),
         question: String(c.question || c.label || id).slice(0, 400),
         zero: typeof c.zero === "string" ? c.zero.slice(0, 400) : "",
+        levels: typeof c.levels === "string" ? c.levels.slice(0, 400) : "",
         enabled: c.enabled !== false,
       });
     }

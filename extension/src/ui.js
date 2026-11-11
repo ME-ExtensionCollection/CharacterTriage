@@ -244,7 +244,7 @@ const CTRUi = (() => {
     const rows = list.map((c) => {
       const preset = CTR.CATEGORY_PRESETS.find((p) => p.id === c.id);
       // Added from an example whose wording has changed since (or that you edited).
-      const differs = preset && (preset.question !== c.question || (preset.zero ?? "") !== (c.zero ?? ""));
+      const differs = preset && (preset.question !== c.question || (preset.zero ?? "") !== (c.zero ?? "") || (preset.levels ?? "") !== (c.levels ?? ""));
       const missing = pending?.byQuestion.get(CTR.categoryField(c.id));
       const pictures = pending?.pictures ?? total;
       const status = c.enabled ? (missing ? `asked on ${Math.max(0, pictures - missing).toLocaleString()} of ${pictures.toLocaleString()} pictures` : "asked on every picture") : "off";
@@ -261,7 +261,7 @@ const CTRUi = (() => {
             ? h("button.ctr-btn.ctr-category-reset", {
                 text: "Reset to preset wording",
                 attrs: { type: "button", title: `Use the example's current wording:\nLook for: ${preset.question}\nDoesn't count: ${preset.zero}\nOnly this question is asked again.` },
-                on: { click: () => update(c.id, { question: preset.question, zero: preset.zero }) },
+                on: { click: () => update(c.id, { question: preset.question, zero: preset.zero, levels: preset.levels ?? "" }) },
               })
             : null,
           h("button.ctr-btn.ctr-category-delete", { text: "Remove", attrs: { type: "button", title: "Stop asking this. Its answers stay until Clean up." }, on: { click: () => save(list.filter((x) => x.id !== c.id)) } }),
@@ -276,6 +276,9 @@ const CTRUi = (() => {
             on: { change: (e) => update(c.id, { question: e.target.value.trim() || c.label }) },
           }),
         ),
+        c.levels
+          ? h("p.ctr-muted.ctr-category-levels", { text: `Levels: ${c.levels}`, attrs: { title: "This example uses its own, stricter 1-3 scale. Reset to preset wording restores it." } })
+          : null,
         h(
           "label.ctr-field",
           {},

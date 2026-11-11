@@ -22,6 +22,10 @@ test("active questions: built in, enabled categories, profile", () => {
   assert.equal(all.at(-2).rubric, "body inflation. 0: not shown at all. 1: a little, or possibly. 2: clearly shown. 3: it is the point of the picture. When unsure, 0.");
   const hyper = CTR.CATEGORY_PRESETS.find((p) => p.id === "hyper_anatomy");
   assert.match(CTR.categoryRubric(hyper), /\. 0: normal human proportions, including large breasts/);
+  assert.match(CTR.categoryRubric(hyper), /1: a little past realistic \(large alone is not enough\)\. 2: clearly impossible size\./);
+  assert.doesNotMatch(CTR.categoryRubric(hyper), /or possibly/);
+  // Own levels are part of the question.
+  assert.notEqual(CTR.questionKey(CTR.categoryQuestion(inflation)), CTR.questionKey(CTR.categoryQuestion({ ...inflation, levels: "1: x. 2: y. 3: z." })));
   // Changing what counts as 0 is a change to the question.
   assert.notEqual(CTR.questionKey(CTR.categoryQuestion({ ...inflation })), CTR.questionKey(CTR.categoryQuestion({ ...inflation, zero: "pregnancy" })));
 });
