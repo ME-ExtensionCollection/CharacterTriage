@@ -92,9 +92,11 @@ const CTR = (() => {
       // The last clause catches a real miss: buttocks filling the whole frame read as background shapes.
       question: "body parts drawn far larger than humanly possible (breasts bigger than the head, a belly like a beach ball, thighs wider than a doorway), including body parts so huge they fill the whole frame behind or around the character, which can look like background shapes",
       zero: "normal human proportions, including large breasts and curvy, chubby or muscular bodies a real person could have",
-      // Stricter than the shared levels: with "1: a little, or possibly" the model put
-      // merely chubby or busty cards at 1-2; this keeps them at 0-1 and the hypers at 2-3.
-      levels: "1: a little past realistic (large alone is not enough). 2: clearly impossible size. 3: the impossible size is the point of the picture. When unsure, 0.",
+      // Its own 0-4 scale. Level 1 is a place for "large but possible, or unsure": on 30
+      // test cards that kept the hedging out of the higher levels, so 3+ is the 9 hyper
+      // cards (and one borderline) every run, with muscular / busty / chubby cards at 1-2.
+      max: 4,
+      levels: "1: large or curvy but a real person could have it, or you are unsure (barely counts). 2: a little past realistic. 3: clearly impossible size. 4: the impossible size is the point of the picture.",
     },
     { id: "inflation", label: "Inflation", question: "a body or belly swollen up like a balloon (with air, liquid or similar), round and taut", zero: "normal bellies, pregnancy, chubby or fat bodies" },
     { id: "weight_gain", label: "Weight gain", question: "weight gain or extreme obesity as the theme (stuffing, feeding, a body far heavier than average)", zero: "slim, average, curvy, thick or chubby bodies" },
@@ -128,12 +130,15 @@ const CTR = (() => {
     return `${what}. 0: ${zero}. ${levels}`;
   }
 
+  /** Highest level of a category: 3, or 4 for one with a wider scale. */
+  const categoryMax = (category) => (category?.max === 4 ? 4 : 3);
+
   function categoryQuestion(category) {
     return {
       id: categoryField(category.id),
       category: category.id,
       label: category.label,
-      schema: { type: "integer", minimum: 0, maximum: 3 },
+      schema: { type: "integer", minimum: 0, maximum: categoryMax(category) },
       rubric: categoryRubric(category),
     };
   }
@@ -328,7 +333,7 @@ const CTR = (() => {
       else if (q.schema.type === "integer") level(q.id, v, q.schema.maximum);
       else if (q.schema.type === "boolean" && v) out.add(`${IMAGE_PREFIX}${q.id}`);
     }
-    for (const c of categories) if (c?.enabled) level(c.id, answers[categoryField(c.id)], 3);
+    for (const c of categories) if (c?.enabled) level(c.id, answers[categoryField(c.id)], categoryMax(c));
     for (const t of Array.isArray(answers.tags) ? answers.tags : []) out.add(`${IMAGE_PREFIX}${t}`);
     return [...out];
   }
@@ -357,10 +362,11 @@ const CTR = (() => {
       }
       if (Array.isArray(answers.tags)) for (const t of answers.tags) x.set(`it:${t}`, 0.5);
       else for (const w of captionWords(answers.caption)) x.set(`w:${w}`, 0.5); // 0.1 scans
-      const inUse = categories ? new Set(categories.filter((c) => c?.enabled).map((c) => categoryField(c.id))) : null;
+      // Category field -> its highest level, for the categories still in use.
+      const inUse = categories ? new Map(categories.filter((c) => c?.enabled).map((c) => [categoryField(c.id), categoryMax(c)])) : null;
       for (const [key, v] of Object.entries(answers)) {
         if (!key.startsWith("cat_") || !Number.isInteger(v) || (inUse && !inUse.has(key))) continue;
-        x.set(key, v / 3);
+        x.set(key, Math.min(1, v / (inUse?.get(key) ?? 3)));
       }
       if (Number.isInteger(answers.profile_match)) x.set("profile_match", (answers.profile_match - 1) / 4);
     } else {
@@ -578,6 +584,7 @@ const CTR = (() => {
     CATEGORY_PRESETS,
     CATEGORY_LEVELS,
     categoryRubric,
+    categoryMax,
     IMAGE_PREFIX,
     TAG_GUARD,
     slug,

@@ -22,8 +22,14 @@ test("active questions: built in, enabled categories, profile", () => {
   assert.equal(all.at(-2).rubric, "body inflation. 0: not shown at all. 1: a little, or possibly. 2: clearly shown. 3: it is the point of the picture. When unsure, 0.");
   const hyper = CTR.CATEGORY_PRESETS.find((p) => p.id === "hyper_anatomy");
   assert.match(CTR.categoryRubric(hyper), /\. 0: normal human proportions, including large breasts/);
-  assert.match(CTR.categoryRubric(hyper), /1: a little past realistic \(large alone is not enough\)\. 2: clearly impossible size\./);
-  assert.doesNotMatch(CTR.categoryRubric(hyper), /or possibly/);
+  assert.match(CTR.categoryRubric(hyper), /1: large or curvy but a real person could have it, or you are unsure \(barely counts\)\. 2: a little past realistic\. 3: clearly impossible size\. 4:/);
+  assert.doesNotMatch(CTR.categoryRubric(hyper), /When unsure, 0/);
+  // Hyper anatomy has a 0-4 scale: schema, picture tags and features follow it.
+  assert.equal(CTR.categoryQuestion(hyper).schema.maximum, 4);
+  assert.equal(CTR.categoryQuestion(inflation).schema.maximum, 3);
+  const h4 = CTR.imageTags({ cat_hyper_anatomy: 4 }, { categories: [{ ...hyper, enabled: true }] });
+  assert.ok(h4.includes("image:hyper_anatomy:4") && h4.includes("image:hyper_anatomy:3"));
+  assert.equal(CTR.features({ cat_hyper_anatomy: 2 }, {}, { categories: [{ ...hyper, enabled: true }] }).get("cat_hyper_anatomy"), 0.5);
   // Own levels are part of the question.
   assert.notEqual(CTR.questionKey(CTR.categoryQuestion(inflation)), CTR.questionKey(CTR.categoryQuestion({ ...inflation, levels: "1: x. 2: y. 3: z." })));
   // Changing what counts as 0 is a change to the question.
