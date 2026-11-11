@@ -118,6 +118,11 @@ await withPage("scan-library", async (page, shot) => {
   // No decisions and no profile: no scores yet.
   assert.equal(await page.evaluate(() => window.marinaraCharTriage.scores().size), 0);
   assert.match(await page.textContent(".ctr-panel"), /Learning starts at 30 decisions/);
+  // Esc closes the panel even though focus fell out of it during the scan.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".ctr-panel", { state: "detached" });
+  await openPanel(page);
   // Scanning again does nothing new.
   await page.click(".ctr-start");
   await waitScanned(page, 300);

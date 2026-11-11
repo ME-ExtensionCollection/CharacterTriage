@@ -100,13 +100,11 @@ const CTRUi = (() => {
       return;
     }
     root = h("div.ctr-overlay", { on: { mousedown: (e) => e.target === root && close() } });
-    root.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        close();
-      }
-    });
     document.body.append(root);
+    // Esc closes the panel wherever focus is: its buttons are rebuilt as the
+    // scan progresses, which drops focus back to the page. Capture phase, so the
+    // Character Manager underneath does not close too.
+    window.addEventListener("keydown", onEscape, true);
     unsubscribe = [CTRStore.onChange(schedule), CTRScan.onChange(schedule)];
     void loadConnections();
     void CTRStore.load().then(schedule);
@@ -114,7 +112,15 @@ const CTRUi = (() => {
     root.querySelector(".ctr-panel")?.focus();
   }
 
+  function onEscape(e) {
+    if (e.key !== "Escape" || !root || e.defaultPrevented) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  }
+
   function close() {
+    window.removeEventListener("keydown", onEscape, true);
     for (const fn of unsubscribe) fn();
     unsubscribe = [];
     root?.remove();
