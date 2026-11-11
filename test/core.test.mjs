@@ -19,7 +19,11 @@ test("active questions: built in, enabled categories, profile", () => {
   assert.ok(!ids(base).includes("caption") && !ids(base).includes("gore"));
   const all = CTR.activeQuestions({ categories: [inflation, vore], profile: "no vore" });
   assert.deepEqual(ids(all).slice(-2), ["cat_inflation", "profile_match"]);
-  assert.match(all.at(-2).rubric, /^body inflation: 0 none/);
+  assert.equal(all.at(-2).rubric, "body inflation. 0: not shown at all. 1: a little, or possibly. 2: clearly shown. 3: it is the point of the picture. When unsure, 0.");
+  const hyper = CTR.CATEGORY_PRESETS.find((p) => p.id === "hyper_anatomy");
+  assert.match(CTR.categoryRubric(hyper), /\. 0: normal human proportions, including large breasts/);
+  // Changing what counts as 0 is a change to the question.
+  assert.notEqual(CTR.questionKey(CTR.categoryQuestion({ ...inflation })), CTR.questionKey(CTR.categoryQuestion({ ...inflation, zero: "pregnancy" })));
 });
 
 test("presets have unique slug ids", () => {

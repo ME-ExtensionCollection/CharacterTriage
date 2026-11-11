@@ -55,7 +55,13 @@ const CTRStore = (() => {
       const id = CTR.slug(c?.id || c?.label);
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      out.push({ id, label: String(c.label || id).slice(0, 60), question: String(c.question || c.label || id).slice(0, 400), enabled: c.enabled !== false });
+      out.push({
+        id,
+        label: String(c.label || id).slice(0, 60),
+        question: String(c.question || c.label || id).slice(0, 400),
+        zero: typeof c.zero === "string" ? c.zero.slice(0, 400) : "",
+        enabled: c.enabled !== false,
+      });
     }
     return out;
   }

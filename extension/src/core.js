@@ -72,17 +72,34 @@ const CTR = (() => {
   // forever. A scan that hits it is marked (tagsTruncated) so it is visible.
   const TAG_GUARD = 100;
 
-  const CATEGORY_RUBRIC = "0 none, 1 a hint or mild, 2 clearly shown, 3 the focus of the image";
+  // Levels shared by every category. Tested on real cards: without a concrete
+  // "what counts as 0" and "when unsure, 0", the model rates ordinary images 1-2.
+  const CATEGORY_LEVELS = "1: a little, or possibly. 2: clearly shown. 3: it is the point of the picture. When unsure, 0.";
+  const CATEGORY_ZERO = "not shown at all";
 
-  /** Example categories, off until you turn them on (and editable). */
+  /**
+   * Example categories, off until you turn them on (and editable). `question`
+   * is what to look for, `zero` what does NOT count (the line the model needs
+   * most). Worded against real cards with Qwen 3.6.
+   */
   const CATEGORY_PRESETS = Object.freeze([
-    { id: "hyper_anatomy", label: "Hyper anatomy", question: "hyper-exaggerated anatomy (body parts drawn impossibly large)" },
-    { id: "inflation", label: "Inflation", question: "body inflation (a body or belly swollen up like a balloon, with air, liquid or similar)" },
-    { id: "weight_gain", label: "Weight gain", question: "weight gain or extreme obesity as a theme" },
-    { id: "body_horror", label: "Body horror", question: "body horror or extreme body distortion (mutation, melting, twisted or merged bodies)" },
-    { id: "gore_guro", label: "Gore / guro", question: "gore or guro (blood, open wounds, exposed organs, mutilation)" },
-    { id: "amputation", label: "Dismemberment / amputation", question: "dismemberment or amputation (missing or severed limbs)" },
-    { id: "vore", label: "Vore", question: "vore (a character being swallowed or eaten whole, or inside another's body)" },
+    {
+      id: "hyper_anatomy",
+      label: "Hyper anatomy",
+      question: "body parts drawn far larger than humanly possible (breasts bigger than the head, a belly like a beach ball, thighs wider than a doorway)",
+      zero: "normal human proportions, including large breasts and curvy, chubby or muscular bodies a real person could have",
+    },
+    { id: "inflation", label: "Inflation", question: "a body or belly swollen up like a balloon (with air, liquid or similar), round and taut", zero: "normal bellies, pregnancy, chubby or fat bodies" },
+    { id: "weight_gain", label: "Weight gain", question: "weight gain or extreme obesity as the theme (stuffing, feeding, a body far heavier than average)", zero: "slim, average, curvy, thick or chubby bodies" },
+    {
+      id: "body_horror",
+      label: "Body horror",
+      question: "body horror or extreme distortion: mutated, melting, twisted, stretched or merged bodies",
+      zero: "intact bodies, including monsters, demons and fantasy races drawn as whole creatures, makeup or costumes",
+    },
+    { id: "gore_guro", label: "Gore / guro", question: "gore or guro: blood, open wounds, exposed organs, mutilation", zero: "no injuries; weapons, bandages, eyepatches or a small scratch alone" },
+    { id: "amputation", label: "Dismemberment / amputation", question: "dismemberment or amputation: missing or severed limbs, stumps", zero: "all limbs present; a wheelchair, crutches or bandages alone" },
+    { id: "vore", label: "Vore", question: "vore: a character being swallowed or eaten whole, or visibly inside another's body or belly", zero: "eating food, kissing, open mouths, biting" },
   ]);
 
   /** A category label to its id: lowercase letters, digits, underscores. */
@@ -96,13 +113,20 @@ const CTR = (() => {
 
   const categoryField = (id) => `cat_${id}`;
 
+  /** "<what to look for>. 0: <what does not count>. 1: … When unsure, 0." */
+  function categoryRubric(category) {
+    const what = String(category.question || category.label || category.id).trim().replace(/[.\s]+$/u, "");
+    const zero = String(category.zero || CATEGORY_ZERO).trim().replace(/[.\s]+$/u, "");
+    return `${what}. 0: ${zero}. ${CATEGORY_LEVELS}`;
+  }
+
   function categoryQuestion(category) {
     return {
       id: categoryField(category.id),
       category: category.id,
       label: category.label,
       schema: { type: "integer", minimum: 0, maximum: 3 },
-      rubric: `${String(category.question ?? category.label).trim()}: ${CATEGORY_RUBRIC}`,
+      rubric: categoryRubric(category),
     };
   }
 
@@ -543,7 +567,8 @@ const CTR = (() => {
   return Object.freeze({
     BUILTIN,
     CATEGORY_PRESETS,
-    CATEGORY_RUBRIC,
+    CATEGORY_LEVELS,
+    categoryRubric,
     IMAGE_PREFIX,
     TAG_GUARD,
     slug,

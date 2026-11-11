@@ -250,27 +250,43 @@ const CTRUi = (() => {
           h("span.ctr-muted.ctr-category-status", { text: status }),
           h("button.ctr-btn.ctr-category-delete", { text: "Remove", attrs: { type: "button", title: "Stop asking this. Its answers stay until Clean up." }, on: { click: () => save(list.filter((x) => x.id !== c.id)) } }),
         ),
-        h("input.ctr-input.ctr-category-question", {
-          attrs: { type: "text", "aria-label": `Question for ${c.label}`, title: "What the model looks for. Changing it re-asks only this question." },
-          value: c.question,
-          on: { change: (e) => update(c.id, { question: e.target.value.trim() || c.label }) },
-        }),
+        h(
+          "label.ctr-field",
+          {},
+          h("span", { text: "Look for" }),
+          h("input.ctr-input.ctr-category-question", {
+            attrs: { type: "text", "aria-label": `What to look for: ${c.label}`, title: "What the model looks for. Changing it re-asks only this question." },
+            value: c.question,
+            on: { change: (e) => update(c.id, { question: e.target.value.trim() || c.label }) },
+          }),
+        ),
+        h(
+          "label.ctr-field",
+          {},
+          h("span", { text: "Doesn't count (rated 0)" }),
+          h("input.ctr-input.ctr-category-zero", {
+            attrs: { type: "text", "aria-label": `Doesn't count: ${c.label}`, placeholder: "not shown at all", title: "Lookalikes the model should rate 0. This matters most: without it, ordinary pictures get 1s and 2s." },
+            value: c.zero ?? "",
+            on: { change: (e) => update(c.id, { zero: e.target.value.trim() }) },
+          }),
+        ),
       );
     });
     const have = new Set(list.map((c) => c.id));
     const presets = CTR.CATEGORY_PRESETS.filter((p) => !have.has(p.id));
     const label = h("input.ctr-input.ctr-new-label", { attrs: { type: "text", placeholder: "Name, e.g. Tentacles", "aria-label": "New category name" } });
-    const question = h("input.ctr-input.ctr-new-question", { attrs: { type: "text", placeholder: "What to look for, e.g. tentacles wrapped around a character", "aria-label": "New category question" } });
+    const question = h("input.ctr-input.ctr-new-question", { attrs: { type: "text", placeholder: "Look for, e.g. tentacles wrapped around a character", "aria-label": "New category question" } });
+    const zero = h("input.ctr-input.ctr-new-zero", { attrs: { type: "text", placeholder: "Doesn't count, e.g. octopus food, ropes, hair", "aria-label": "New category: what doesn't count" } });
     const add = () => {
       const id = CTR.slug(label.value);
       if (!id) return label.focus();
       if (have.has(id)) return toast(`There is already a category “${id}”.`, { error: true });
-      save([...list, { id, label: label.value.trim(), question: question.value.trim() || label.value.trim(), enabled: true }]);
+      save([...list, { id, label: label.value.trim(), question: question.value.trim() || label.value.trim(), zero: zero.value.trim(), enabled: true }]);
     };
     return section(
       "Categories",
       h("p.ctr-muted", {
-        text: "Things you want found in pictures. Each is asked as 0 none, 1 hint, 2 clearly shown, 3 the focus, and becomes a picture tag in the Character Manager: image:inflation is any level, image:inflation:2 is 2 or more. Adding or changing one only asks that question.",
+        text: "Things you want found in pictures. Each is rated 0 (doesn't count), 1 a little or possibly, 2 clearly shown, 3 the point of the picture, and becomes a picture tag in the Character Manager: image:inflation is any level, image:inflation:2 is 2 or more. Say what doesn't count: lookalikes rated 0 keep ordinary pictures out. Adding or changing one only asks that question.",
       }),
       rows.length ? h("ul.ctr-categories", {}, rows) : null,
       presets.length
@@ -281,7 +297,7 @@ const CTRUi = (() => {
             presets.map((p) => h("button.ctr-btn.ctr-preset", { text: `+ ${p.label}`, attrs: { type: "button", "data-id": p.id, title: p.question }, on: { click: () => save([...list, { ...p, enabled: true }]) } })),
           )
         : null,
-      h("div.ctr-row.ctr-new-category", {}, label, question, h("button.ctr-btn.ctr-add-category", { text: "Add", attrs: { type: "button" }, on: { click: add } })),
+      h("div.ctr-row.ctr-new-category", {}, label, question, zero, h("button.ctr-btn.ctr-add-category", { text: "Add", attrs: { type: "button" }, on: { click: add } })),
     );
   }
 
