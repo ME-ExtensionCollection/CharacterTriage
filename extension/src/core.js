@@ -64,11 +64,13 @@ const CTR = (() => {
     { id: "tone", schema: { enum: ["wholesome", "neutral", "romantic", "sexual", "dark", "comedic"] }, rubric: "overall mood of the image" },
     {
       id: "tags",
-      schema: { type: "array", items: { type: "string", maxLength: 40 }, maxItems: 15 },
-      rubric: "up to 15 danbooru-style tags for what is visible (lowercase, underscores instead of spaces, e.g. 1girl, long_hair, maid, sword, tentacles, large_breasts, outdoors): characters, body, clothing, objects, setting. Most important first. Only what you can see.",
+      schema: { type: "array", items: { type: "string", maxLength: 40 } },
+      rubric: "every danbooru-style tag that fits what is visible (lowercase, underscores instead of spaces, e.g. 1girl, long_hair, maid, sword, tentacles, large_breasts, outdoors): characters, body, clothing, objects, setting, art. As many as apply, most important first. Only what you can see.",
     },
   ]);
-  const MAX_TAGS = 15;
+  // Not a limit on what the model may say: a guard against a reply that loops
+  // forever. A scan that hits it is marked (tagsTruncated) so it is visible.
+  const TAG_GUARD = 100;
 
   const CATEGORY_RUBRIC = "0 none, 1 a hint or mild, 2 clearly shown, 3 the focus of the image";
 
@@ -187,7 +189,7 @@ const CTR = (() => {
     if (schema.type === "string") return typeof v === "string" ? v.trim().slice(0, schema.maxLength) : null;
     if (schema.type === "array") {
       if (!Array.isArray(v)) return null;
-      return [...new Set(v.map(normImageTag).filter(Boolean))].slice(0, schema.maxItems ?? MAX_TAGS);
+      return [...new Set(v.map(normImageTag).filter(Boolean))].slice(0, TAG_GUARD);
     }
     return null;
   }
@@ -218,6 +220,7 @@ const CTR = (() => {
       if (ok !== null) known += 1;
     }
     if (known === 0) throw new Error("Model reply has none of the expected fields");
+    if (Array.isArray(value.tags) && new Set(value.tags.map(normImageTag).filter(Boolean)).size > TAG_GUARD) out.tagsTruncated = true;
     return out;
   }
 
@@ -239,6 +242,10 @@ const CTR = (() => {
     for (const q of questions) {
       next.answers[q.id] = answers[q.id] ?? null;
       next.asked[q.id] = questionKey(q);
+    }
+    if (questions.some((q) => q.id === "tags")) {
+      if (answers.tagsTruncated) next.answers.tagsTruncated = true;
+      else delete next.answers.tagsTruncated;
     }
     return next;
   }
@@ -538,6 +545,7 @@ const CTR = (() => {
     CATEGORY_PRESETS,
     CATEGORY_RUBRIC,
     IMAGE_PREFIX,
+    TAG_GUARD,
     slug,
     categoryField,
     categoryQuestion,

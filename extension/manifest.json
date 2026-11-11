@@ -3,7 +3,7 @@
   "version": 1,
   "config": {
     "name": "Char Triage",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Scans character avatars with your own vision model (through a Marinara connection), learns from what you keep and delete, and scores every card by how likely you are to dislike it. Character Library's manager can sort and filter by the score.",
     "runtime": "client",
     "capabilities": [

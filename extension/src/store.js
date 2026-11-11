@@ -181,12 +181,14 @@ const CTRStore = (() => {
     const qs = questions();
     const counts = new Map(qs.map((q) => [q.id, 0]));
     let cardsPending = 0;
+    let pictures = 0; // cards with an avatar to ask about
     for (const card of cards) {
+      if (card.avatarPath && !(scans.get(card.id)?.noAvatar && scans.get(card.id)?.avatarPath === card.avatarPath)) pictures += 1;
       const missing = CTR.missingQuestions(scans.get(card.id), qs, card.avatarPath || "");
       if (missing.length) cardsPending += 1;
       for (const q of missing) counts.set(q.id, counts.get(q.id) + 1);
     }
-    return { cardsPending, byQuestion: counts, questions: qs };
+    return { cardsPending, pictures, byQuestion: counts, questions: qs };
   }
 
   // ── Decisions ──
@@ -286,8 +288,12 @@ const CTRStore = (() => {
     }
     let orphans = 0;
     const referenced = new Set(decisions.map((d) => d.cardId));
-    for (const id of scans.keys()) if (!cardsById.has(id) && !referenced.has(id)) orphans += 1;
-    return { scans: scans.size, decisions: decisions.length, avatars: avatarIds.length, orphans, usage: estimate?.usage ?? null, quota: estimate?.quota ?? null };
+    let truncated = 0;
+    for (const [id, scan] of scans) {
+      if (!cardsById.has(id) && !referenced.has(id)) orphans += 1;
+      if (scan.answers?.tagsTruncated) truncated += 1;
+    }
+    return { scans: scans.size, decisions: decisions.length, avatars: avatarIds.length, orphans, truncated, usage: estimate?.usage ?? null, quota: estimate?.quota ?? null };
   }
 
   /**

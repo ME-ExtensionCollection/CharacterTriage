@@ -93,22 +93,29 @@ const CTRScan = (() => {
     const list = [...new Set(ids)];
     if (state.running && current) {
       const questions = CTRStore.questions();
-      const queued = new Set(current.jobs.slice(current.next()).map((j) => j.id));
-      let added = 0;
-      // Picked cards go next, ahead of the rest of a full scan.
+      const { jobs } = current;
+      const at = current.next();
+      // Picked cards go next, ahead of the rest of a full scan; ones already waiting further down move up.
       const front = [];
+      let added = 0;
       for (const id of list) {
+        if (current.busy.has(id)) continue; // being asked right now
+        const waiting = jobs.findIndex((j, i) => i >= at && j.id === id);
+        if (waiting >= 0) {
+          front.push(jobs.splice(waiting, 1)[0]);
+          continue;
+        }
         const card = CTRStore.cardsById.get(id);
-        const job = card && !queued.has(id) && liveJob(card, questions);
+        const job = card && liveJob(card, questions);
         if (job) {
           front.push(job);
           added += 1;
         }
       }
-      current.jobs.splice(current.next(), 0, ...front);
+      jobs.splice(at, 0, ...front);
       state.total += added;
       emit();
-      return added;
+      return front.length;
     }
     await CTRStore.refreshCatalog().catch(() => {});
     const jobs = await plan({ ids: list });
@@ -133,7 +140,8 @@ const CTRScan = (() => {
     const keptIds = new Set(await CTRDb.allAvatarIds());
     let next = 0;
     let pausedUntil = 0;
-    current = { jobs, next: () => next };
+    const busy = new Set();
+    current = { jobs, next: () => next, busy };
 
     const ask = async (job, image) => {
       const prompt = CTR.prompt(job.missing);
@@ -219,6 +227,7 @@ const CTRScan = (() => {
     const worker = async () => {
       while (next < jobs.length && !state.stopping) {
         const job = jobs[next++];
+        busy.add(job.id);
         try {
           await scanOne(job);
           state.done += 1;
@@ -233,6 +242,7 @@ const CTRScan = (() => {
             state.lastError = `Stopped after ${GIVE_UP_AFTER} failures in a row. ${error.message}`;
           }
         }
+        busy.delete(job.id);
         state.waitingUntil = 0;
         emit();
       }

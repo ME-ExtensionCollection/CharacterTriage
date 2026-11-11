@@ -111,7 +111,8 @@ const CTRApi = (() => {
       messages: [{ role: "user", content: prompt, images: [dataUrl] }],
       parameters: {
         temperature: 0,
-        maxTokens: 400,
+        // Room for a long tag list; a reply cut off mid-JSON would fail the card.
+        maxTokens: 2000,
         customParameters: {
           chat_template_kwargs: { enable_thinking: false },
           response_format: { type: "json_schema", json_schema: { name: "card_image", strict: true, schema } },

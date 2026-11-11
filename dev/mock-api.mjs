@@ -35,7 +35,10 @@ export function truth(n) {
     background: render ? "detailed" : "simple",
     palette: render ? "muted" : "bright",
     tone: "neutral",
-    caption: render ? "A glossy 3D rendered woman in a city" : "An anime girl with long hair smiling",
+    tags: render ? ["1girl", "3d", "glossy_skin", "city", "night"] : ["1girl", "long_hair", "smile", "school_uniform"],
+    // Categories: every 10th card shows inflation clearly, every 15th is vore.
+    cat_inflation: n % 10 === 0 ? 2 : 0,
+    cat_vore: n % 15 === 0 ? 3 : 0,
   };
 }
 
@@ -90,7 +93,8 @@ export function createMockApi({ count = 300, seed = 1 } = {}) {
         updatedAt: new Date(Date.UTC(2026, 0, 1) + i * 3600_000).toISOString(),
       };
     });
-    api.stats = { raw: 0, inFlight: 0, maxInFlight: 0, rateLimited: 0, avatars: 0, deletes: 0, prompts: [] };
+    // asked: the fields each answered request asked for (from its JSON schema).
+    api.stats = { raw: 0, inFlight: 0, maxInFlight: 0, rateLimited: 0, avatars: 0, deletes: 0, asked: [] };
     // rateLimit: every Nth raw request answers 429 once. fail: "all" makes the model error.
     api.options = { rateLimit, delay, fail };
   };
@@ -135,12 +139,14 @@ export function createMockApi({ count = 300, seed = 1 } = {}) {
         if (!image.startsWith("data:image/jpeg;base64,")) return [400, { error: "expected a JPEG data URL" }];
         if (body.parameters?.customParameters?.chat_template_kwargs?.enable_thinking !== false) return [400, { error: "thinking should be off" }];
         const schema = body.parameters?.customParameters?.response_format?.json_schema?.schema;
-        if (!schema?.required?.includes("style")) return [400, { error: "missing schema" }];
-        api.stats.prompts.push(body.messages[0].content.length);
+        if (!schema?.required?.length) return [400, { error: "missing schema" }];
         // The card number rides in the runId (ctr-<cardId>-<time>).
         const m = String(body.runId ?? "").match(/card-(\d+)/);
-        const answers = truth(m ? Number(m[1]) : 0);
-        if (schema.required.includes("profile_match")) answers.profile_match = answers.style === "3d_render" ? 5 : 1;
+        const all = truth(m ? Number(m[1]) : 0);
+        all.profile_match = all.style === "3d_render" ? 5 : 1;
+        // Answer only what was asked (unknown categories: 0).
+        const answers = Object.fromEntries(schema.required.map((k) => [k, k in all ? all[k] : k.startsWith("cat_") ? 0 : null]));
+        api.stats.asked.push({ card: m ? Number(m[1]) : null, fields: schema.required });
         return [200, { content: "```json\n" + JSON.stringify(answers) + "\n```", runId: body.runId }];
       } finally {
         api.stats.inFlight -= 1;

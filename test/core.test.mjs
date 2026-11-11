@@ -82,7 +82,18 @@ test("parseAnswers: fenced, chatter, bad values to null, tags normalised", () =>
   assert.equal(messy.low_effort, true);
   assert.equal(messy.tags, null);
   assert.equal("extra" in messy, false);
-  assert.equal(CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 30 }, (_, i) => `t${i}`) }), qs).tags.length, 15);
+  // No cap on tags; only a runaway guard, and hitting it is recorded.
+  const many = CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 60 }, (_, i) => `t${i}`) }), qs);
+  assert.equal(many.tags.length, 60);
+  assert.equal("tagsTruncated" in many, false);
+  const runaway = CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 500 }, (_, i) => `t${i}`) }), qs);
+  assert.equal(runaway.tags.length, CTR.TAG_GUARD);
+  assert.equal(runaway.tagsTruncated, true);
+  const tagQ = qs.filter((q) => q.id === "tags");
+  const marked = CTR.mergeAnswers(null, { cardId: "r", avatarPath: "/r.png", questions: tagQ, answers: runaway });
+  assert.equal(marked.answers.tagsTruncated, true);
+  assert.equal("tagsTruncated" in CTR.mergeAnswers(marked, { cardId: "r", avatarPath: "/r.png", questions: tagQ, answers: many }).answers, false);
+  assert.equal(CTR.answerSchema(qs).properties.tags.maxItems, undefined);
   assert.throws(() => CTR.parseAnswers("no idea", qs), /No JSON object/);
   assert.throws(() => CTR.parseAnswers("{nope}", qs), /not valid JSON/);
   assert.throws(() => CTR.parseAnswers(`{"foo":1}`, qs), /none of the expected/);

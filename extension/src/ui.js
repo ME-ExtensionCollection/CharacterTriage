@@ -44,6 +44,11 @@ const CTRUi = (() => {
     if (name.startsWith("t:")) return `tag “${name.slice(2)}”`;
     if (name.startsWith("c:")) return `creator “${name.slice(2)}”`;
     if (name.startsWith("w:")) return `looks like “${name.slice(2)}”`;
+    if (name.startsWith("it:")) return `picture tag “${name.slice(3)}”`;
+    if (name.startsWith("cat_")) {
+      const id = name.slice(4);
+      return `${CTRStore.settings.categories.find((c) => c.id === id)?.label ?? id} in the picture`;
+    }
     if (name === "unscanned") return "not scanned yet";
     const [key, value] = name.split("=");
     const label = key.replace(/_/g, " ");
@@ -232,7 +237,8 @@ const CTRUi = (() => {
     const update = (id, patch) => save(list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const rows = list.map((c) => {
       const missing = pending?.byQuestion.get(CTR.categoryField(c.id));
-      const status = c.enabled ? (missing ? `asked on ${(total - missing).toLocaleString()} of ${total.toLocaleString()}` : "asked on every card") : "off";
+      const pictures = pending?.pictures ?? total;
+      const status = c.enabled ? (missing ? `asked on ${Math.max(0, pictures - missing).toLocaleString()} of ${pictures.toLocaleString()} pictures` : "asked on every picture") : "off";
       return h(
         "li.ctr-category",
         { attrs: { "data-id": c.id } },
@@ -474,7 +480,7 @@ const CTRUi = (() => {
       "Storage",
       h("p.ctr-muted", {
         text: st
-          ? `${st.scans.toLocaleString()} scans, ${st.decisions.toLocaleString()} decisions, ${st.avatars.toLocaleString()} kept avatars, in this browser's IndexedDB (not Marinara's extension storage).${st.usage !== null ? ` This site uses ${mb(st.usage)}${st.quota ? ` of ${mb(st.quota)} allowed` : ""}.` : ""}${st.orphans ? ` ${st.orphans.toLocaleString()} scans are for cards no longer in the library.` : ""}`
+          ? `${st.scans.toLocaleString()} scans, ${st.decisions.toLocaleString()} decisions, ${st.avatars.toLocaleString()} kept avatars, in this browser's IndexedDB (not Marinara's extension storage).${st.usage !== null ? ` This site uses ${mb(st.usage)}${st.quota ? ` of ${mb(st.quota)} allowed` : ""}.` : ""}${st.orphans ? ` ${st.orphans.toLocaleString()} scans are for cards no longer in the library.` : ""}${st.truncated ? ` ${st.truncated.toLocaleString()} replies had over ${CTR.TAG_GUARD} picture tags (a runaway reply); only the first ${CTR.TAG_GUARD} were kept.` : ""}`
           : "Counting…",
       }),
       h(

@@ -222,6 +222,50 @@
   overflow-wrap: anywhere;
 }
 
+.ctr-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ctr-category {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--ctr-border);
+  border-radius: 0.6rem;
+}
+
+.ctr-category-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ctr-category-status {
+  margin-left: auto;
+}
+
+.ctr-category code {
+  font-size: 0.75rem;
+}
+
+.ctr-new-category .ctr-input {
+  flex: 1 1 12rem;
+  width: auto;
+}
+
+.ctr-presets .ctr-btn {
+  min-height: 1.7rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+}
+
 .ctr-toasts {
   position: fixed;
   bottom: 1rem;
