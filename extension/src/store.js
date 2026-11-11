@@ -263,11 +263,8 @@ const CTRStore = (() => {
   async function putScan(scan) {
     await CTRDb.putScan(scan);
     scans.set(scan.cardId, scan);
-    if (imageTagMap) {
-      const tags = CTR.imageTags(scan.answers, { categories: settings.categories });
-      if (tags.length) imageTagMap.set(scan.cardId, tags);
-      else imageTagMap.delete(scan.cardId);
-    }
+    // A new map (not edited in place), so readers can tell the picture tags changed.
+    imageTagMap = null;
     // Fresh answers change scores and picture tags; tell listeners in batches, not per scan.
     if (++scansSinceScore >= 25) {
       scansSinceScore = 0;

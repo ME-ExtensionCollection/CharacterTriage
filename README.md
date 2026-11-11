@@ -1,10 +1,11 @@
 # Char Triage
 
-A Marinara Engine External Extension for cleaning up big, bulk-imported character libraries. It has your own vision model look at every card's avatar once, learns from the cards you keep and delete, and scores every card by how likely you are to dislike it. With [Character Library](../CharacterLib) installed, the Character Manager can sort and filter by that score, so the cards worth reviewing come first.
+A Marinara Engine External Extension for cleaning up big, bulk-imported character libraries. It has your own vision model look at every card's avatar, gives every card **picture tags** (what is actually in the image, including categories you define), learns from the cards you keep and delete, and scores every card by how likely you are to dislike it. With [Character Library](../CharacterLib) installed, the Character Manager can search the picture tags and sort and filter by the score, so the cards worth reviewing come first.
 
 ## How it works
 
-1. **Scan.** Each avatar is shrunk to 512 px and sent to a vision model through one of your Marinara connections, with a fixed list of questions: art style, AI artifacts, image quality, low effort (screenshots, memes, text), text or watermarks, NSFW, gore, framing, number of characters, gender presentation, species, background, colours, mood, and a short caption. The model must answer in JSON (a JSON schema is sent), with thinking turned off.
+1. **Scan.** Each avatar is shrunk to 512 px and sent to a vision model through one of your Marinara connections. Built-in questions: art style, AI artifacts, image quality, low effort (screenshots, memes, text), text or watermarks, NSFW, framing, number of characters, gender presentation, species, background, colours, mood, and **every danbooru-style tag that fits** (no limit; a guard at 100 only stops a runaway reply, and the Storage section counts any reply that hit it). Plus one 0–3 question per **category** you turn on, and the dislike profile if you wrote one. The model must answer in JSON (a JSON schema is sent), with thinking turned off.
+   Each question has its own version. Adding a category, rewording one, or editing the profile only asks that question again; a card whose avatar file changed is asked everything again. Scans from 0.1 keep their answers and only get the new questions.
 2. **Decide.** As you work in the Character Manager, every delete is logged as "dislike" and every **Keep** as "fine". Cards you open in the details pane and don't delete count as a weak keep.
 3. **Learn.** A small logistic regression runs in the browser on the answers plus the card's tags and creator. It retrains a moment after each batch of decisions and scores every card from 0 to 1, shown as 1 (likely fine) to 5 (likely disliked).
 
@@ -16,17 +17,17 @@ Before you have about 30 decisions (at least 5 deletes and 5 keeps), the score c
 
 Open it with **Alt+Shift+T**, or the Triage button in the Character Manager.
 
-- **Vision model**: the connection to use (any chat connection whose model reads images, such as llama.cpp started with `--mmproj`), the dislike profile, and the learn-from-deletes default.
-- **Scan**: *Scan library* scans every card not scanned yet, newest first. Cards you already decided on go before the rest, because they are what the model learns from. It runs while Marinara is open, picks up again after a reload, and only runs in one tab. *Requests at once* should match llama.cpp's `--parallel`. *Pilot* scans only up to 300 cards you already decided on, so you can check the model against your own calls before the full run. Identical images (re-imports) are asked about once. Avatars of cards deleted before they were scanned are kept in a small copy and scanned later, so those decisions still count.
+- **Vision model**: the connection to use (any chat connection whose model reads images, such as llama.cpp started with `--mmproj`), the dislike profile, the learn-from-deletes default, and **Pause automatic keeps**: while it is on, cards you open and don't delete are not counted as fine (handy while you hunt one category and leave the rest for later).
+- **Categories**: things you want found in pictures. Examples to add with one click: hyper anatomy, inflation, weight gain, body horror, gore / guro, dismemberment / amputation, vore. Add your own with a name and what to look for. Each is answered 0 none, 1 a hint, 2 clearly shown, 3 the focus, and becomes a picture tag: `image:inflation` is any level, `image:inflation:2` two or more. Each shows how many pictures it has been asked on. *Remove* stops asking; its answers stay until *Clean up*.
+- **Scan**: *Scan library* asks every card the questions it hasn't been asked yet, newest first. Cards you already decided on go before the rest, because they are what the model learns from. It runs while Marinara is open, picks up again after a reload, and only runs in one tab. *Requests at once* should match llama.cpp's `--parallel`. *Pilot* scans only up to 300 cards you already decided on, so you can check the model against your own calls before the full run. Identical images (re-imports) are asked about once. Avatars of cards deleted before they were scanned are kept in a small copy and scanned later, so those decisions still count. To scan only some cards, select them in the Character Manager and use **Ask Char Triage**; they jump the queue of a running scan.
 - **What it learned**: how many decisions it uses, how often it predicts your call on decisions it was not trained on, how many cards fall in each score band, and the strongest signals each way.
-- **Tags you delete**: tags on at least 5 deleted cards that you delete more often than your overall rate, strongest first (smoothed, so 30 of 32 beats 6 of 6). Each tag has **Copy**, and **Blacklist** adds it to Char Importer's profile tag blacklist (needs a Char Importer version with its sharing API).
-- **Backup**: decisions and scans live in this browser's IndexedDB, not on the server. **Export…** saves everything to a dated JSON file; **Import…** merges a file back in (the decision logs are combined, and the newer scan wins). A notice offers an export after every 200 new decisions.
-
-Changing the dislike profile changes the questions, so cards are scanned again on the next run.
+- **Tags you delete**: *Card tags* or *Picture tags* on at least 5 deleted cards that you delete more often than your overall rate, strongest first (smoothed, so 30 of 32 beats 6 of 6). Each tag has **Copy**, and card tags have **Blacklist**, which adds it to Char Importer's profile tag blacklist (needs a Char Importer version with its sharing API).
+- **Backup**: decisions and scans live in this browser's IndexedDB, not on the server. **Export…** saves everything to a dated JSON file; **Import…** merges a file back in (the decision logs are combined, and scans merge question by question, newer answer winning). A notice offers an export after every 200 new decisions.
+- **Storage**: how many scans, decisions and kept avatars there are, and how much the browser reports this site using. Everything is in IndexedDB, not Marinara's 1 MB extension storage (only settings and categories go there). **Clean up** removes scans of cards that are gone and that no decision refers to, kept avatars no longer needed, and answers to removed categories. Decisions are never removed. **Clear everything** wipes this browser's data after you type CLEAR.
 
 ## Speed
 
-On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel) one image takes about 1.5 s, or about 0.85 s each with 4 at once: roughly 3.5 hours for 14,000 cards. Each card is two requests to Marinara (avatar and model), well inside its limit of 600 a minute. A "too many requests" answer pauses the scan for as long as Marinara asks. Dropped connections and server errors are retried, and after 10 failures in a row the scan stops and shows the error.
+On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel), 0.1's questions took about 1.2 s per card with 4 at once, roughly 4.5 hours for 14,000 cards. The full tag list and categories add output, so expect somewhat more; later runs that only ask a new category are much shorter replies. Each card is two requests to Marinara (avatar and model), well inside its limit of 600 a minute. A "too many requests" answer pauses the scan for as long as Marinara asks. Dropped connections and server errors are retried, and after 10 failures in a row the scan stops and shows the error.
 
 ## For other extensions
 
@@ -43,6 +44,8 @@ On Qwen 3.6 35B A3B (llama.cpp, Q4, f16 vision, 4 parallel) one image takes abou
 | `beforeDelete(cards, { learnById })` | log deletes (call before deleting); `learnById` overrides the default per card |
 | `recordKeep(idsOrCards, { implied })` | log keeps |
 | `scanState()` | progress of the current or last scan |
+| `imageTags()`, `imageTagsOf(id)` | picture tags (`image:…`): a `Map` card id → list, a new map whenever they change |
+| `scanCards(ids)` | ask about these cards now (only what each still needs); resolves with how many had something to ask |
 | `openPanel()` | open the panel |
 
 `marinara-char-triage:changed` fires on `window` when scores change. Check for the methods you need, not the version.
