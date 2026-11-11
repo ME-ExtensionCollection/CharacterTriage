@@ -89,7 +89,8 @@ const CTR = (() => {
     {
       id: "hyper_anatomy",
       label: "Hyper anatomy",
-      question: "body parts drawn far larger than humanly possible (breasts bigger than the head, a belly like a beach ball, thighs wider than a doorway)",
+      // The last clause catches a real miss: buttocks filling the whole frame read as background shapes.
+      question: "body parts drawn far larger than humanly possible (breasts bigger than the head, a belly like a beach ball, thighs wider than a doorway), including body parts so huge they fill the whole frame behind or around the character, which can look like background shapes",
       zero: "normal human proportions, including large breasts and curvy, chubby or muscular bodies a real person could have",
     },
     { id: "inflation", label: "Inflation", question: "a body or belly swollen up like a balloon (with air, liquid or similar), round and taut", zero: "normal bellies, pregnancy, chubby or fat bodies" },
