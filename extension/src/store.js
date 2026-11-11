@@ -33,6 +33,8 @@ const CTRStore = (() => {
   let stats = { rows: 0, deletes: 0, keeps: 0, accuracy: null, mode: "none", trainedAt: null, top: null };
   let ready = null;
   let retrainTimer = 0;
+  let accuracyTimer = 0;
+  let accuracyFor = -1; // decision count the accuracy figure was computed for
   let saveTimer = 0;
   const listeners = new Set();
 
@@ -139,15 +141,21 @@ const CTRStore = (() => {
     const keeps = rows.length - deletes;
     if (rows.length >= MIN_ROWS && deletes >= 5 && keeps >= 5) {
       model = CTR.train(rows);
-      stats = {
-        rows: rows.length,
-        deletes,
-        keeps,
-        accuracy: CTR.crossValidate(rows),
-        mode: "learned",
-        trainedAt: new Date().toISOString(),
-        top: CTR.topWeights(model),
-      };
+      // The accuracy check is 5 more trainings (most of the cost at 2,000 decisions):
+      // only when the decisions changed, and as its own step so scoring isn't held up.
+      const reuse = accuracyFor === decisions.length ? stats.accuracy : null;
+      stats = { rows: rows.length, deletes, keeps, accuracy: reuse, mode: "learned", trainedAt: new Date().toISOString(), top: CTR.topWeights(model) };
+      if (accuracyFor !== decisions.length) {
+        marinara.clearTimeout(accuracyTimer);
+        const count = decisions.length;
+        accuracyTimer = marinara.setTimeout(() => {
+          // Every n-th row, at most 1,000: the figure barely moves, the pause halves.
+          const step = Math.max(1, Math.ceil(rows.length / 1000));
+          stats = { ...stats, accuracy: CTR.crossValidate(rows.filter((_, i) => i % step === 0)) };
+          accuracyFor = count;
+          emit();
+        }, 50);
+      }
     } else {
       model = null;
       stats = { rows: rows.length, deletes, keeps, accuracy: null, mode: "profile", trainedAt: null, top: null };
