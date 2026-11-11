@@ -87,8 +87,8 @@ test("parseAnswers: fenced, chatter, bad values to null, tags normalised", () =>
   assert.equal(messy.tags, null);
   assert.equal("extra" in messy, false);
   // No cap on tags; only a runaway guard, and hitting it is recorded.
-  const many = CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 60 }, (_, i) => `t${i}`) }), qs);
-  assert.equal(many.tags.length, 60);
+  const many = CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 40 }, (_, i) => `t${i}`) }), qs);
+  assert.equal(many.tags.length, 40);
   assert.equal("tagsTruncated" in many, false);
   const runaway = CTR.parseAnswers(JSON.stringify({ tags: Array.from({ length: 500 }, (_, i) => `t${i}`) }), qs);
   assert.equal(runaway.tags.length, CTR.TAG_GUARD);
@@ -97,7 +97,8 @@ test("parseAnswers: fenced, chatter, bad values to null, tags normalised", () =>
   const marked = CTR.mergeAnswers(null, { cardId: "r", avatarPath: "/r.png", questions: tagQ, answers: runaway });
   assert.equal(marked.answers.tagsTruncated, true);
   assert.equal("tagsTruncated" in CTR.mergeAnswers(marked, { cardId: "r", avatarPath: "/r.png", questions: tagQ, answers: many }).answers, false);
-  assert.equal(CTR.answerSchema(qs).properties.tags.maxItems, undefined);
+  // The guard is in the schema, so the model is stopped there while generating.
+  assert.equal(CTR.answerSchema(qs).properties.tags.maxItems, CTR.TAG_GUARD);
   assert.throws(() => CTR.parseAnswers("no idea", qs), /No JSON object/);
   assert.throws(() => CTR.parseAnswers("{nope}", qs), /not valid JSON/);
   assert.throws(() => CTR.parseAnswers(`{"foo":1}`, qs), /none of the expected/);

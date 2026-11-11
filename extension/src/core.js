@@ -64,13 +64,16 @@ const CTR = (() => {
     { id: "tone", schema: { enum: ["wholesome", "neutral", "romantic", "sexual", "dark", "comedic"] }, rubric: "overall mood of the image" },
     {
       id: "tags",
-      schema: { type: "array", items: { type: "string", maxLength: 40 } },
+      // maxItems is a runaway guard, not a cap: llama.cpp enforces the schema while
+      // generating, so a looping reply stops at the guard instead of running into the
+      // token limit as broken JSON (seen on a real card). Real cards use 12-24.
+      schema: { type: "array", items: { type: "string", maxLength: 40 }, maxItems: 60 },
       rubric: "every danbooru-style tag that fits what is visible (lowercase, underscores instead of spaces, e.g. 1girl, long_hair, maid, sword, tentacles, large_breasts, outdoors): characters, body, clothing, objects, setting, art. As many as apply, most important first. Only what you can see.",
     },
   ]);
   // Not a limit on what the model may say: a guard against a reply that loops
-  // forever. A scan that hits it is marked (tagsTruncated) so it is visible.
-  const TAG_GUARD = 100;
+  // forever. A scan that reaches it is marked (tagsTruncated) so it is visible.
+  const TAG_GUARD = 60;
 
   // Levels shared by every category. Tested on real cards: without a concrete
   // "what counts as 0" and "when unsure, 0", the model rates ordinary images 1-2.
@@ -244,7 +247,8 @@ const CTR = (() => {
       if (ok !== null) known += 1;
     }
     if (known === 0) throw new Error("Model reply has none of the expected fields");
-    if (Array.isArray(value.tags) && new Set(value.tags.map(normImageTag).filter(Boolean)).size > TAG_GUARD) out.tagsTruncated = true;
+    // Reaching the guard means the model was probably looping (and was stopped there).
+    if (Array.isArray(value.tags) && value.tags.length >= TAG_GUARD) out.tagsTruncated = true;
     return out;
   }
 

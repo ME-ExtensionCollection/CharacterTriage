@@ -496,7 +496,7 @@ const CTRUi = (() => {
       "Storage",
       h("p.ctr-muted", {
         text: st
-          ? `${st.scans.toLocaleString()} scans, ${st.decisions.toLocaleString()} decisions, ${st.avatars.toLocaleString()} kept avatars, in this browser's IndexedDB (not Marinara's extension storage).${st.usage !== null ? ` This site uses ${mb(st.usage)}${st.quota ? ` of ${mb(st.quota)} allowed` : ""}.` : ""}${st.orphans ? ` ${st.orphans.toLocaleString()} scans are for cards no longer in the library.` : ""}${st.truncated ? ` ${st.truncated.toLocaleString()} replies had over ${CTR.TAG_GUARD} picture tags (a runaway reply); only the first ${CTR.TAG_GUARD} were kept.` : ""}`
+          ? `${st.scans.toLocaleString()} scans, ${st.decisions.toLocaleString()} decisions, ${st.avatars.toLocaleString()} kept avatars, in this browser's IndexedDB (not Marinara's extension storage).${st.usage !== null ? ` This site uses ${mb(st.usage)}${st.quota ? ` of ${mb(st.quota)} allowed` : ""}.` : ""}${st.orphans ? ` ${st.orphans.toLocaleString()} scans are for cards no longer in the library.` : ""}${st.truncated ? ` ${st.truncated.toLocaleString()} replies reached the ${CTR.TAG_GUARD}-tag guard (probably a looping reply, stopped there).` : ""}`
           : "Counting…",
       }),
       h(
