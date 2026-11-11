@@ -242,6 +242,9 @@ const CTRUi = (() => {
     const save = (next) => CTRStore.saveSettings({ categories: next });
     const update = (id, patch) => save(list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const rows = list.map((c) => {
+      const preset = CTR.CATEGORY_PRESETS.find((p) => p.id === c.id);
+      // Added from an example whose wording has changed since (or that you edited).
+      const differs = preset && (preset.question !== c.question || (preset.zero ?? "") !== (c.zero ?? ""));
       const missing = pending?.byQuestion.get(CTR.categoryField(c.id));
       const pictures = pending?.pictures ?? total;
       const status = c.enabled ? (missing ? `asked on ${Math.max(0, pictures - missing).toLocaleString()} of ${pictures.toLocaleString()} pictures` : "asked on every picture") : "off";
@@ -254,6 +257,13 @@ const CTRUi = (() => {
           h("label.ctr-check", {}, h("input.ctr-category-on", { attrs: { type: "checkbox", "aria-label": `Ask about ${c.label}` }, checked: c.enabled, on: { change: (e) => update(c.id, { enabled: e.target.checked }) } }), h("strong", { text: ` ${c.label}` })),
           h("code.ctr-muted", { text: `image:${c.id}` }),
           h("span.ctr-muted.ctr-category-status", { text: status }),
+          differs
+            ? h("button.ctr-btn.ctr-category-reset", {
+                text: "Reset to preset wording",
+                attrs: { type: "button", title: `Use the example's current wording:\nLook for: ${preset.question}\nDoesn't count: ${preset.zero}\nOnly this question is asked again.` },
+                on: { click: () => update(c.id, { question: preset.question, zero: preset.zero }) },
+              })
+            : null,
           h("button.ctr-btn.ctr-category-delete", { text: "Remove", attrs: { type: "button", title: "Stop asking this. Its answers stay until Clean up." }, on: { click: () => save(list.filter((x) => x.id !== c.id)) } }),
         ),
         h(

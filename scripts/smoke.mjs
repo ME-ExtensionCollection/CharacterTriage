@@ -322,6 +322,11 @@ await withPage("category-asks-only-new-question", async (page, shot) => {
   await page.press(".ctr-category[data-id='inflation'] .ctr-category-question", "Enter");
   await page.locator(".ctr-panel h2").click();
   await waitScanned(page, 6, 300);
+  // Edited: "Reset to preset wording" puts the example's text back (and re-asks only it).
+  await page.waitForSelector(".ctr-category[data-id='inflation'] .ctr-category-reset");
+  await page.click(".ctr-category[data-id='inflation'] .ctr-category-reset");
+  await page.waitForSelector(".ctr-category[data-id='inflation'] .ctr-category-reset", { state: "detached" });
+  assert.match(await page.inputValue(".ctr-category[data-id='inflation'] .ctr-category-question"), /swollen up like a balloon/);
   // Turning it off: nothing to ask, and its picture tags go away.
   await page.uncheck(".ctr-category[data-id='inflation'] .ctr-category-on");
   await waitScanned(page, 300);
